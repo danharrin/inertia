@@ -1,12 +1,11 @@
 import { Poll, PollCallback } from './poll'
+import type { RouterContext } from './routerContext'
 import { PollOptions } from './types'
 
-class Polls {
+export class Polls {
   protected polls: Poll[] = []
 
-  constructor() {
-    this.setupVisibilityListener()
-  }
+  constructor(protected context: RouterContext) {}
 
   public get count(): number {
     return this.polls.length
@@ -21,13 +20,16 @@ class Polls {
     start: VoidFunction
     destroy: VoidFunction
   } {
-    const poll = new Poll(interval, cb, options)
+    const poll = new Poll(interval, this.context.callback(cb), {
+      ...options,
+      autoStart: (options.autoStart ?? true) && this.context.navigation.active,
+    })
 
     this.polls.push(poll)
 
     return {
       stop: () => poll.stop(),
-      start: () => poll.start(),
+      start: this.context.callback(() => poll.start()),
       destroy: () => {
         poll.stop()
         this.polls = this.polls.filter((p) => p !== poll)
@@ -41,19 +43,17 @@ class Polls {
     this.polls = []
   }
 
-  protected setupVisibilityListener() {
+  public init(): VoidFunction {
     if (typeof document === 'undefined') {
-      return
+      return () => {}
     }
 
-    document.addEventListener(
-      'visibilitychange',
-      () => {
-        this.polls.forEach((poll) => poll.isInBackground(document.hidden))
-      },
-      false,
-    )
+    const listener = () => {
+      this.polls.forEach((poll) => poll.isInBackground(document.hidden))
+    }
+
+    document.addEventListener('visibilitychange', listener, false)
+
+    return () => document.removeEventListener('visibilitychange', listener, false)
   }
 }
-
-export const polls = new Polls()

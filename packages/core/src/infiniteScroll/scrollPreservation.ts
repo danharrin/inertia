@@ -1,5 +1,5 @@
 import { getElementsInViewportFromCollection } from '../domUtils'
-import { navigation } from '../navigation'
+import { getCurrentContext } from '../routerGraph'
 
 /**
  * When loading content "before" the current viewport (e.g. loading page 1 when viewing page 2),
@@ -14,20 +14,20 @@ export const useInfiniteScrollPreservation = (options: {
   getScrollableParent: () => HTMLElement | null
   getItemsElement: () => HTMLElement
 }) => {
+  const context = getCurrentContext()
   const createCallbacks = () => {
-    const generation = navigation.generation
     let currentScrollTop: number
     let referenceElement: Element | null = null
     let referenceElementTop: number = 0
 
     const captureScrollPosition = () => {
-      if (!navigation.isCurrent(generation)) {
+      if (!context.navigation.active) {
         return
       }
 
       const scrollableContainer = options.getScrollableParent()
 
-      if (navigation.external && !scrollableContainer) {
+      if (context.navigation.external && !scrollableContainer) {
         return
       }
 
@@ -42,7 +42,9 @@ export const useInfiniteScrollPreservation = (options: {
 
       if (visibleElements.length > 0) {
         referenceElement = visibleElements[0]
-        const containerRect = scrollableContainer?.getBoundingClientRect() || { top: 0 }
+        const containerRect = scrollableContainer?.getBoundingClientRect() || {
+          top: 0,
+        }
         const containerTop = scrollableContainer ? containerRect.top : 0
         const rect = referenceElement.getBoundingClientRect()
         // Store the reference element's position relative to its container
@@ -61,13 +63,15 @@ export const useInfiniteScrollPreservation = (options: {
       const restore = () => {
         attempts++
 
-        if (restored || attempts > 10 || !navigation.isCurrent(generation)) {
+        if (restored || attempts > 10 || !context.navigation.active) {
           return false
         }
 
         // Calculate where our reference element ended up after new content was prepended
         const scrollableContainer = options.getScrollableParent()
-        const containerRect = scrollableContainer?.getBoundingClientRect() || { top: 0 }
+        const containerRect = scrollableContainer?.getBoundingClientRect() || {
+          top: 0,
+        }
         const containerTop = scrollableContainer ? containerRect.top : 0
         const newRect = referenceElement!.getBoundingClientRect()
         const newElementTop = newRect.top - containerTop
@@ -85,7 +89,7 @@ export const useInfiniteScrollPreservation = (options: {
         // in the same visual position as before the update
         if (scrollableContainer) {
           scrollableContainer.scrollTo({ top: currentScrollTop + adjustment })
-        } else if (!navigation.external) {
+        } else if (!context.navigation.external) {
           window.scrollTo(0, window.scrollY + adjustment)
         }
 

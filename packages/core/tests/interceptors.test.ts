@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { interceptors } from '../src/interceptors'
+import { getCurrentContext } from '../src/routerGraph'
 import type { HttpRequestConfig, HttpResponse, InternalActiveVisit } from '../src/types'
 
 const makeVisit = (overrides: Partial<InternalActiveVisit> = {}): InternalActiveVisit =>
@@ -32,7 +33,7 @@ describe('interceptors', () => {
 
       const visit = makeVisit()
       const config = makeRequest()
-      await interceptors.processRequest(visit, config)
+      await interceptors.processRequest(getCurrentContext(), visit, config)
 
       expect(handler).toHaveBeenCalledWith(visit, config)
     })
@@ -46,7 +47,7 @@ describe('interceptors', () => {
         })),
       )
 
-      const result = await interceptors.processRequest(makeVisit({ id: 'abc' }), makeRequest())
+      const result = await interceptors.processRequest(getCurrentContext(), makeVisit({ id: 'abc' }), makeRequest())
 
       expect(result.headers).toMatchObject({ 'X-Visit': 'abc' })
       expect(result.data).toEqual({ mutated: true })
@@ -56,7 +57,7 @@ describe('interceptors', () => {
       track(interceptors.onVisitRequest((_visit, config) => ({ ...config, url: `${config.url}/a` })))
       track(interceptors.onVisitRequest((_visit, config) => ({ ...config, url: `${config.url}/b` })))
 
-      const result = await interceptors.processRequest(makeVisit(), makeRequest({ url: '/users' }))
+      const result = await interceptors.processRequest(getCurrentContext(), makeVisit(), makeRequest({ url: '/users' }))
 
       expect(result.url).toBe('/users/a/b')
     })
@@ -69,7 +70,7 @@ describe('interceptors', () => {
         })),
       )
 
-      const result = await interceptors.processRequest(makeVisit(), makeRequest())
+      const result = await interceptors.processRequest(getCurrentContext(), makeVisit(), makeRequest())
 
       expect(result.headers).toMatchObject({ 'X-Async': 'yes' })
     })
@@ -78,9 +79,9 @@ describe('interceptors', () => {
       const handler = vi.fn((_visit, config) => config)
       const unsubscribe = interceptors.onVisitRequest(handler)
 
-      await interceptors.processRequest(makeVisit(), makeRequest())
+      await interceptors.processRequest(getCurrentContext(), makeVisit(), makeRequest())
       unsubscribe()
-      await interceptors.processRequest(makeVisit(), makeRequest())
+      await interceptors.processRequest(getCurrentContext(), makeVisit(), makeRequest())
 
       expect(handler).toHaveBeenCalledTimes(1)
     })
@@ -93,7 +94,7 @@ describe('interceptors', () => {
 
       const visit = makeVisit()
       const response = makeResponse({ headers: { 'x-foo': 'bar' } })
-      await interceptors.processResponse(visit, response)
+      await interceptors.processResponse(getCurrentContext(), visit, response)
 
       expect(handler).toHaveBeenCalledWith(visit, response)
     })
@@ -102,7 +103,7 @@ describe('interceptors', () => {
       track(interceptors.onVisitResponse((_visit, response) => ({ ...response, status: response.status + 1 })))
       track(interceptors.onVisitResponse((_visit, response) => ({ ...response, status: response.status + 1 })))
 
-      const result = await interceptors.processResponse(makeVisit(), makeResponse({ status: 200 }))
+      const result = await interceptors.processResponse(getCurrentContext(), makeVisit(), makeResponse({ status: 200 }))
 
       expect(result.status).toBe(202)
     })
@@ -111,9 +112,9 @@ describe('interceptors', () => {
       const handler = vi.fn((_visit, response) => response)
       const unsubscribe = interceptors.onVisitResponse(handler)
 
-      await interceptors.processResponse(makeVisit(), makeResponse())
+      await interceptors.processResponse(getCurrentContext(), makeVisit(), makeResponse())
       unsubscribe()
-      await interceptors.processResponse(makeVisit(), makeResponse())
+      await interceptors.processResponse(getCurrentContext(), makeVisit(), makeResponse())
 
       expect(handler).toHaveBeenCalledTimes(1)
     })

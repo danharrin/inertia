@@ -1,51 +1,35 @@
 import { isEqual } from 'es-toolkit'
 import { get, set } from 'es-toolkit/compat'
-import { router } from '.'
 import dialog from './dialog'
-import {
-  fireBeforeUpdateEvent,
-  fireErrorEvent,
-  fireFlashEvent,
-  fireHttpExceptionEvent,
-  fireLocationEvent,
-  firePrefetchedEvent,
-  fireSuccessEvent,
-} from './events'
-import { history } from './history'
 import { interceptors } from './interceptors'
 import { parsePage } from './json'
-import { navigation } from './navigation'
-import { page as currentPage } from './page'
 import { partialReloadRequestsProp } from './partialReload'
-import Queue from './queue'
 import { RequestParams } from './requestParams'
+import type { RouterContext } from './routerContext'
 import { SessionStorage } from './sessionStorage'
 import { ActiveVisit, ErrorBag, Errors, HttpResponse, Page, PageProps } from './types'
 import { hrefToUrl, isSameUrlWithoutHash, isSameUrlWithoutQueryOrHash, setHashIfSameUrl } from './url'
-
-let queue = new Queue<Promise<boolean | void>>()
-let queueGeneration = navigation.generation
 
 export class Response {
   protected wasPrefetched = false
   protected processed = false
 
   constructor(
+    protected context: RouterContext,
     protected requestParams: RequestParams,
     protected response: HttpResponse,
     protected originatingPage: Page,
     protected optimisticId: number | null = null,
-    protected navigationGeneration = navigation.generation,
   ) {}
 
   public static create(
+    context: RouterContext,
     params: RequestParams,
     response: HttpResponse,
     originatingPage: Page,
     optimisticId: number | null = null,
-    generation = navigation.generation,
   ): Response {
-    return new Response(params, response, originatingPage, optimisticId, generation)
+    return new Response(context, params, response, originatingPage, optimisticId)
   }
 
   public isProcessed(): boolean {
@@ -59,20 +43,11 @@ export class Response {
   }
 
   public async handle() {
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
-    if (queueGeneration !== this.navigationGeneration) {
-      queue = new Queue<Promise<boolean | void>>()
-      queueGeneration = this.navigationGeneration
-    }
-
-    return queue.add(() => this.process())
+    return this.context.responseQueue.add(() => this.process())
   }
 
   public async process() {
-    if (!navigation.isCurrent(this.navigationGeneration)) {
+    if (!this.context.navigation.active) {
       return
     }
 
@@ -82,21 +57,13 @@ export class Response {
 
       this.requestParams.all().onPrefetched(this.response, this.requestParams.all())
 
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
-
-      firePrefetchedEvent(this.response, this.requestParams.all())
+      this.context.events.firePrefetchedEvent(this.response, this.requestParams.all())
 
       return Promise.resolve()
     }
 
     this.requestParams.runCallbacks()
     this.processed = true
-
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
 
     if (!this.isInertiaResponse()) {
       return this.handleNonInertiaResponse()
@@ -108,39 +75,28 @@ export class Response {
         data: this.getDataFromResponse(this.response.data),
       }
 
-      if (
-        this.requestParams.all().onHttpException(response) === false ||
-        !navigation.isCurrent(this.navigationGeneration)
-      ) {
+      if (this.requestParams.all().onHttpException(response) === false) {
         return
       }
 
-      if (!fireHttpExceptionEvent(response) || !navigation.isCurrent(this.navigationGeneration)) {
+      if (!this.context.events.fireHttpExceptionEvent(response)) {
         return
       }
     }
 
-    await history.processQueue()
+    await this.context.history.processQueue()
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
-    if (navigation.external) {
+    if (this.context.navigation.external) {
       if (!this.shouldSetPage(this.getPageResponse())) {
         return
       }
 
-      this.response = await interceptors.processResponse(this.requestParams.all(), this.response)
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
+      this.response = await interceptors.processResponse(this.context, this.requestParams.all(), this.response)
 
       const destination = this.getPageResponse()
-      const sameComponent = destination.component === currentPage.get().component
+      const sameComponent = destination.component === this.context.page.get().component
       const destinationUrl = new URL(this.pageUrl(destination), hrefToUrl(destination.url))
-      const currentUrl = hrefToUrl(currentPage.get().url)
+      const currentUrl = hrefToUrl(this.context.page.get().url)
       const sameUrl = destinationUrl.href === currentUrl.href
       const queryOnlyPartialReload =
         this.requestParams.all().method === 'get' &&
@@ -155,80 +111,51 @@ export class Response {
       }
     }
 
-    history.preserveUrl = this.requestParams.all().preserveUrl
+    this.context.history.preserveUrl = this.requestParams.all().preserveUrl
 
     await this.setPage()
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
-    const { flash } = currentPage.get()
+    const { flash } = this.context.page.get()
 
     if (Object.keys(flash).length > 0 && !this.requestParams.isDeferredPropsRequest()) {
-      fireFlashEvent(flash)
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
-
+      this.context.events.fireFlashEvent(flash)
       this.requestParams.all().onFlash(flash)
     }
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
-    const errors = currentPage.get().props.errors || {}
+    const errors = this.context.page.get().props.errors || {}
 
     if (Object.keys(errors).length > 0) {
       const scopedErrors = this.getScopedErrors(errors)
 
-      fireErrorEvent(scopedErrors, { page: currentPage.get(), visitId: this.requestParams.all().id })
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
+      this.context.events.fireErrorEvent(scopedErrors, {
+        page: this.context.page.get(),
+        visitId: this.requestParams.all().id,
+      })
 
       return this.requestParams.all().onError(scopedErrors)
     }
 
-    router.flushByCacheTags(this.requestParams.all().invalidateCacheTags || [])
+    this.context.router.flushByCacheTags(this.requestParams.all().invalidateCacheTags || [])
 
     if (!this.wasPrefetched) {
       // We end up here other than from the prefetch cache, so we assume this response is
       // newer than the cached one and therefore flush the cache.
-      router.flush(currentPage.get().url)
+      this.context.router.flush(this.context.page.get().url)
     }
 
-    fireSuccessEvent(currentPage.get(), { visitId: this.requestParams.all().id })
+    this.context.events.fireSuccessEvent(this.context.page.get(), {
+      visitId: this.requestParams.all().id,
+    })
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
+    await this.requestParams.all().onSuccess(this.context.page.get())
 
-    await this.requestParams.all().onSuccess(currentPage.get())
-
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
-    history.preserveUrl = false
+    this.context.history.preserveUrl = false
   }
 
   protected async handleExternalNavigation(destination: Page): Promise<void> {
     if (Object.keys(destination.flash).length > 0 && !this.requestParams.isDeferredPropsRequest()) {
-      fireFlashEvent(destination.flash)
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
-
+      this.context.events.fireFlashEvent(destination.flash)
       this.requestParams.all().onFlash(destination.flash)
-    }
-
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
     }
 
     const errors = destination.props.errors || {}
@@ -236,32 +163,29 @@ export class Response {
     if (Object.keys(errors).length > 0) {
       const scopedErrors = this.getScopedErrors(errors)
 
-      fireErrorEvent(scopedErrors, { page: destination, visitId: this.requestParams.all().id })
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
+      this.context.events.fireErrorEvent(scopedErrors, {
+        page: destination,
+        visitId: this.requestParams.all().id,
+      })
 
       await this.requestParams.all().onError(scopedErrors)
     } else {
-      router.flushByCacheTags(this.requestParams.all().invalidateCacheTags || [])
+      this.context.router.flushByCacheTags(this.requestParams.all().invalidateCacheTags || [])
 
       if (!this.wasPrefetched) {
-        router.flush(destination.url)
+        this.context.router.flush(destination.url)
       }
 
-      fireSuccessEvent(destination, { visitId: this.requestParams.all().id })
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
+      this.context.events.fireSuccessEvent(destination, {
+        visitId: this.requestParams.all().id,
+      })
 
       await this.requestParams.all().onSuccess(destination)
     }
 
-    if (navigation.isCurrent(this.navigationGeneration)) {
+    if (this.context.navigation.active) {
       this.requestParams.markAsFinished()
-      navigation.external?.navigate(destination.url)
+      this.context.navigation.external?.navigate(destination.url)
     }
   }
 
@@ -274,7 +198,11 @@ export class Response {
 
     // Only spread if data is an object (not a string like HTML error pages)
     if (typeof data === 'object') {
-      return (this.response.data = { ...data, flash: data.flash ?? {}, rescuedProps: data.rescuedProps ?? [] })
+      return (this.response.data = {
+        ...data,
+        flash: data.flash ?? {},
+        rescuedProps: data.rescuedProps ?? [],
+      })
     }
 
     return (this.response.data = data)
@@ -282,7 +210,7 @@ export class Response {
 
   protected async handleNonInertiaResponse() {
     if (this.isInertiaRedirect()) {
-      router.visit(this.getHeader('x-inertia-redirect'), {
+      this.context.router.visit(this.getHeader('x-inertia-redirect'), {
         ...this.requestParams.all(),
         method: 'get',
         data: {},
@@ -304,14 +232,11 @@ export class Response {
       data: this.getDataFromResponse(this.response.data),
     }
 
-    if (
-      this.requestParams.all().onHttpException(response) === false ||
-      !navigation.isCurrent(this.navigationGeneration)
-    ) {
+    if (this.requestParams.all().onHttpException(response) === false) {
       return
     }
 
-    if (fireHttpExceptionEvent(response) && navigation.isCurrent(this.navigationGeneration)) {
+    if (this.context.events.fireHttpExceptionEvent(response)) {
       return dialog.show(response.data)
     }
   }
@@ -354,9 +279,9 @@ export class Response {
       }
 
       const responseVersion = this.getHeader('x-inertia-version')
-      const versionChange = !!responseVersion && responseVersion !== currentPage.get().version
+      const versionChange = !!responseVersion && responseVersion !== this.context.page.get().version
 
-      if (!fireLocationEvent(url, versionChange) || !navigation.isCurrent(this.navigationGeneration)) {
+      if (!this.context.events.fireLocationEvent(url, versionChange)) {
         return
       }
 
@@ -367,9 +292,9 @@ export class Response {
         return
       }
 
-      if (navigation.external && !versionChange) {
+      if (this.context.navigation.external && !versionChange) {
         this.requestParams.markAsFinished()
-        navigation.external.navigate(url.href)
+        this.context.navigation.external.navigate(url.href)
 
         return
       }
@@ -395,46 +320,29 @@ export class Response {
       return Promise.resolve()
     }
 
-    if (!navigation.external) {
-      this.response = await interceptors.processResponse(this.requestParams.all(), this.response)
-    }
-
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
+    if (!this.context.navigation.external) {
+      this.response = await interceptors.processResponse(this.context, this.requestParams.all(), this.response)
     }
 
     this.mergeProps(pageResponse)
-    currentPage.mergeOncePropsIntoResponse(pageResponse)
+    this.context.page.mergeOncePropsIntoResponse(pageResponse)
     this.preserveOptimisticProps(pageResponse)
     this.preserveEqualProps(pageResponse)
 
     await this.setRememberedState(pageResponse)
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
     this.requestParams.setPreserveOptions(pageResponse)
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
-    pageResponse.url = history.preserveUrl || navigation.external ? currentPage.get().url : this.pageUrl(pageResponse)
+    pageResponse.url =
+      this.context.history.preserveUrl || this.context.navigation.external
+        ? this.context.page.get().url
+        : this.pageUrl(pageResponse)
 
     this.requestParams.all().onBeforeUpdate(pageResponse)
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
+    this.context.events.fireBeforeUpdateEvent(pageResponse)
 
-    fireBeforeUpdateEvent(pageResponse)
-
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
-    return currentPage.set(pageResponse, {
+    return this.context.page.set(pageResponse, {
       replace: this.requestParams.all().replace,
       preserveScroll: this.requestParams.all().preserveScroll as boolean,
       preserveState: this.requestParams.all().preserveState as boolean,
@@ -470,12 +378,12 @@ export class Response {
 
     // At this point, if the originating request component is different than the current component,
     // the user has since navigated and we should discard the response
-    if (this.originatingPage.component !== currentPage.get().component) {
+    if (this.originatingPage.component !== this.context.page.get().component) {
       return false
     }
 
     const originatingUrl = hrefToUrl(this.originatingPage.url)
-    const currentPageUrl = hrefToUrl(currentPage.get().url)
+    const currentPageUrl = hrefToUrl(this.context.page.get().url)
 
     // We have the same component, let's double-check the URL
     // If we're no longer on the same path name (e.g. /users/1 -> /users/2), we should not set the page
@@ -495,14 +403,14 @@ export class Response {
   }
 
   protected preserveOptimisticProps(pageResponse: Page): void {
-    if (!router.hasPendingOptimistic() && !this.isStaleOptimisticResponse()) {
+    if (!this.context.router.hasPendingOptimistic() && !this.isStaleOptimisticResponse()) {
       return
     }
 
     for (const key of Object.keys(pageResponse.props)) {
-      if (currentPage.hasBaseline(key)) {
-        currentPage.updateBaseline(key, pageResponse.props[key])
-        pageResponse.props[key] = currentPage.get().props[key]
+      if (this.context.page.hasBaseline(key)) {
+        this.context.page.updateBaseline(key, pageResponse.props[key])
+        pageResponse.props[key] = this.context.page.get().props[key]
       }
     }
   }
@@ -510,15 +418,15 @@ export class Response {
   protected isStaleOptimisticResponse(): boolean {
     // An optimistic request that started later has already been confirmed, so these
     // props were read before that write and would roll it back on screen
-    return this.optimisticId !== null && currentPage.hasConfirmedOptimisticAfter(this.optimisticId)
+    return this.optimisticId !== null && this.context.page.hasConfirmedOptimisticAfter(this.optimisticId)
   }
 
   protected preserveEqualProps(pageResponse: Page): void {
-    if (pageResponse.component !== currentPage.get().component) {
+    if (pageResponse.component !== this.context.page.get().component) {
       return
     }
 
-    const currentPageProps = currentPage.get().props
+    const currentPageProps = this.context.page.get().props
 
     Object.entries(pageResponse.props).forEach(([key, value]) => {
       if (isEqual(value, currentPageProps[key])) {
@@ -528,7 +436,7 @@ export class Response {
   }
 
   protected mergeProps(pageResponse: Page): void {
-    if (!this.requestParams.isPartial() || pageResponse.component !== currentPage.get().component) {
+    if (!this.requestParams.isPartial() || pageResponse.component !== this.context.page.get().component) {
       return
     }
 
@@ -538,7 +446,7 @@ export class Response {
     const matchPropsOn = pageResponse.matchPropsOn || []
 
     const mergeProp = (prop: string, shouldAppend: boolean) => {
-      const currentProp = get(currentPage.get().props, prop)
+      const currentProp = get(this.context.page.get().props, prop)
       const incomingProp = get(pageResponse.props, prop)
 
       if (Array.isArray(incomingProp)) {
@@ -565,7 +473,7 @@ export class Response {
     propsToPrepend.forEach((prop) => mergeProp(prop, false))
 
     propsToDeepMerge.forEach((prop) => {
-      const currentProp = get(currentPage.get().props, prop)
+      const currentProp = get(this.context.page.get().props, prop)
       const incomingProp = get(pageResponse.props, prop)
 
       // Function to recursively merge objects and arrays
@@ -599,31 +507,34 @@ export class Response {
         .map((prop) => prop.split('.')[0]),
     )
     for (const key of nestedTopKeys) {
-      const currentValue = currentPage.get().props[key]
+      const currentValue = this.context.page.get().props[key]
 
       if (this.isObject(currentValue) && this.isObject(pageResponse.props[key])) {
         pageResponse.props[key] = this.deepMergeObjects(currentValue as PageProps, pageResponse.props[key] as PageProps)
       }
     }
 
-    pageResponse.props = { ...currentPage.get().props, ...pageResponse.props }
+    pageResponse.props = {
+      ...this.context.page.get().props,
+      ...pageResponse.props,
+    }
 
     if (this.shouldPreserveErrors(pageResponse)) {
-      pageResponse.props.errors = currentPage.get().props.errors
+      pageResponse.props.errors = this.context.page.get().props.errors
     }
 
     // Preserve the existing scrollProps
-    if (currentPage.get().scrollProps) {
+    if (this.context.page.get().scrollProps) {
       pageResponse.scrollProps = {
-        ...(currentPage.get().scrollProps || {}),
+        ...(this.context.page.get().scrollProps || {}),
         ...(pageResponse.scrollProps || {}),
       }
     }
 
     // Preserve the existing onceProps
-    if (currentPage.hasOnceProps()) {
+    if (this.context.page.hasOnceProps()) {
       pageResponse.onceProps = {
-        ...(currentPage.get().onceProps || {}),
+        ...(this.context.page.get().onceProps || {}),
         ...(pageResponse.onceProps || {}),
       }
     }
@@ -632,10 +543,10 @@ export class Response {
     // the same flash from the initial load), but let regular partial reloads use
     // whatever the server sent (which may be empty, clearing stale flash)
     if (this.requestParams.isDeferredPropsRequest()) {
-      pageResponse.flash = { ...currentPage.get().flash }
+      pageResponse.flash = { ...this.context.page.get().flash }
     }
 
-    const currentOriginalDeferred = currentPage.get().initialDeferredProps
+    const currentOriginalDeferred = this.context.page.get().initialDeferredProps
     if (currentOriginalDeferred && Object.keys(currentOriginalDeferred).length > 0) {
       pageResponse.initialDeferredProps = currentOriginalDeferred
     }
@@ -644,7 +555,7 @@ export class Response {
   }
 
   protected mergeRescuedProps(pageResponse: Page): string[] {
-    const currentRescued = currentPage.get().rescuedProps ?? []
+    const currentRescued = this.context.page.get().rescuedProps ?? []
     const incomingRescued = pageResponse.rescuedProps ?? []
 
     const newRescued = new Set(
@@ -667,7 +578,7 @@ export class Response {
       return false
     }
 
-    const currentErrors = currentPage.get().props.errors
+    const currentErrors = this.context.page.get().props.errors
 
     if (!currentErrors || Object.keys(currentErrors).length === 0) {
       return false
@@ -794,12 +705,15 @@ export class Response {
   }
 
   protected async setRememberedState(pageResponse: Page): Promise<void> {
-    const rememberedState = await history.getState<Page['rememberedState']>(history.rememberedState, {})
+    const rememberedState = await this.context.history.getState<Page['rememberedState']>(
+      this.context.history.rememberedState,
+      {},
+    )
 
     if (
       this.requestParams.all().preserveState &&
       rememberedState &&
-      pageResponse.component === currentPage.get().component
+      pageResponse.component === this.context.page.get().component
     ) {
       pageResponse.rememberedState = rememberedState
     }

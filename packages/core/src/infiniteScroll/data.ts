@@ -1,5 +1,5 @@
-import { ActiveVisit, router } from '../index'
-import { page as currentPage } from '../page'
+import { getCurrentContext } from '../routerGraph'
+import { ActiveVisit } from '../types'
 import { Page, PendingVisit, ReloadOptions, ScrollProp, UseInfiniteScrollDataManager } from '../types'
 
 const MERGE_INTENT_HEADER = 'X-Inertia-Infinite-Scroll-Merge-Intent'
@@ -15,7 +15,10 @@ type InfiniteScrollState = {
 }
 
 export type InfiniteScrollPageIdentifier = string | number | null
-export type InfiniteScrollOnCompleteDetails = { page: InfiniteScrollPageIdentifier; completed: boolean }
+export type InfiniteScrollOnCompleteDetails = {
+  page: InfiniteScrollPageIdentifier
+  completed: boolean
+}
 
 export const useInfiniteScrollData = (options: {
   getPropName: () => string
@@ -34,8 +37,10 @@ export const useInfiniteScrollData = (options: {
   ) => void
   onReset?: () => void
 }): UseInfiniteScrollDataManager => {
+  const context = getCurrentContext()
+
   const getScrollPropFromCurrentPage = (): ScrollProp => {
-    const scrollProp = currentPage.get().scrollProps?.[options.getPropName()]
+    const scrollProp = context.page.get().scrollProps?.[options.getPropName()]
 
     if (scrollProp) {
       return scrollProp
@@ -59,7 +64,7 @@ export const useInfiniteScrollData = (options: {
   const resetState = () => {
     const scrollProp = getScrollPropFromCurrentPage()
 
-    state.component = currentPage.get().component
+    state.component = context.page.get().component
     state.loading = false
     state.previousPage = scrollProp.previousPage
     state.nextPage = scrollProp.nextPage
@@ -72,7 +77,7 @@ export const useInfiniteScrollData = (options: {
   if (typeof window !== 'undefined') {
     resetState()
 
-    const rememberedState = router.restore(getRememberKey()) as InfiniteScrollState | undefined
+    const rememberedState = context.router.restore(getRememberKey()) as InfiniteScrollState | undefined
 
     if (
       rememberedState &&
@@ -88,12 +93,15 @@ export const useInfiniteScrollData = (options: {
     }
   }
 
-  const removeEventListener = router.on('success', (event) => {
-    if (state.component === event.detail.page.component && getScrollPropFromCurrentPage().reset) {
-      resetState()
-      options.onReset?.()
-    }
-  })
+  const removeEventListener = context.router.on(
+    'success',
+    context.callback((event) => {
+      if (state.component === event.detail.page.component && getScrollPropFromCurrentPage().reset) {
+        resetState()
+        options.onReset?.()
+      }
+    }),
+  )
 
   const getScrollPropKeyForSide = (side: Side): ScrollPropPageNames => {
     return side === 'next' ? 'nextPage' : 'previousPage'
@@ -116,7 +124,7 @@ export const useInfiniteScrollData = (options: {
 
     // We save the state in the browser history so it can be restored
     // if the user navigates away and then back to the page...
-    router.remember(
+    context.router.remember(
       {
         previousPage: state.previousPage,
         nextPage: state.nextPage,
@@ -131,6 +139,10 @@ export const useInfiniteScrollData = (options: {
   const getRequestCount = () => state.requestCount
 
   const fetchPage = (side: Side, reloadOptions: ReloadOptions = {}): void => {
+    if (!context.navigation.active) {
+      return
+    }
+
     const page = findPageToLoad(side)
 
     if (state.loading || page === null) {
@@ -139,7 +151,7 @@ export const useInfiniteScrollData = (options: {
 
     state.loading = true
 
-    router.reload({
+    context.router.reload({
       preserveErrors: true,
       ...reloadOptions,
       data: { ...(reloadOptions.data || {}), [getPageName()]: page },

@@ -1,19 +1,11 @@
 import { get } from 'es-toolkit/compat'
-import {
-  fireFinishEvent,
-  fireNetworkErrorEvent,
-  firePrefetchingEvent,
-  fireProgressEvent,
-  fireStartEvent,
-} from './events'
 import { http } from './http'
 import { HttpCancelledError, HttpResponseError } from './httpErrors'
 import { interceptors } from './interceptors'
 import { containsBigInt, stringifyJson } from './json'
-import { navigation } from './navigation'
-import { page as currentPage } from './page'
 import { RequestParams } from './requestParams'
 import { Response } from './response'
+import type { RouterContext } from './routerContext'
 import type { ActiveVisit, Page } from './types'
 import { HttpProgressEvent, HttpRequestConfig, HttpRequestHeaders } from './types'
 import { urlWithoutHash } from './url'
@@ -24,20 +16,25 @@ export class Request {
   protected requestParams: RequestParams
   protected requestHasFinished = false
   protected optimisticId: number | null
-  protected navigationGeneration = navigation.generation
 
   constructor(
+    protected context: RouterContext,
     params: ActiveVisit,
     protected page: Page,
     { optimisticId = null }: { optimisticId?: number | null } = {},
   ) {
-    this.requestParams = RequestParams.create(params)
+    this.requestParams = RequestParams.create(context, params)
     this.cancelToken = new AbortController()
     this.optimisticId = optimisticId
   }
 
-  public static create(params: ActiveVisit, page: Page, options?: { optimisticId?: number | null }): Request {
-    return new Request(params, page, options)
+  public static create(
+    context: RouterContext,
+    params: ActiveVisit,
+    page: Page,
+    options?: { optimisticId?: number | null },
+  ): Request {
+    return new Request(context, params, page, options)
   }
 
   public isPrefetch(): boolean {
@@ -66,34 +63,13 @@ export class Request {
       this.cancel({ cancelled: true })
     })
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return this.finish()
-    }
-
-    fireStartEvent(this.requestParams.all())
-
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return this.finish()
-    }
+    this.context.events.fireStartEvent(this.requestParams.all())
 
     this.requestParams.onStart()
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return this.finish()
-    }
-
     if (this.requestParams.all().prefetch) {
       this.requestParams.onPrefetching()
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return this.finish()
-      }
-
-      firePrefetchingEvent(this.requestParams.all())
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return this.finish()
-      }
+      this.context.events.firePrefetchingEvent(this.requestParams.all())
     }
 
     // We capture this up here because the response
@@ -113,12 +89,17 @@ export class Request {
     // The HTTP clients would throw on a BigInt, so those bodies are encoded here
     if (containsBigInt(config.data)) {
       config.data = stringifyJson(config.data)
-      config.headers = { 'Content-Type': 'application/json', ...config.headers }
+      config.headers = {
+        'Content-Type': 'application/json',
+        ...config.headers,
+      }
     }
 
-    const processedConfig = await interceptors.processRequest(this.requestParams.all(), config)
+    const processedConfig = await interceptors.processRequest(this.context, this.requestParams.all(), config)
 
-    if (!navigation.isCurrent(this.navigationGeneration)) {
+    // Interceptors and visit callbacks may dispose the owner. Never start network
+    // activity for an inactive mount.
+    if (!this.context.navigation.active) {
       this.finish()
 
       return
@@ -128,33 +109,19 @@ export class Request {
       .getClient()
       .request(processedConfig)
       .then((response) => {
-        if (!navigation.isCurrent(this.navigationGeneration)) {
-          return
-        }
-
-        this.response = Response.create(
-          this.requestParams,
-          response,
-          this.page,
-          this.optimisticId,
-          this.navigationGeneration,
-        )
+        this.response = Response.create(this.context, this.requestParams, response, this.page, this.optimisticId)
 
         return this.response.handle()
       })
       .catch((error) => {
         // Handle HTTP error responses (4xx/5xx)
         if (error instanceof HttpResponseError) {
-          if (!navigation.isCurrent(this.navigationGeneration)) {
-            return
-          }
-
           this.response = Response.create(
+            this.context,
             this.requestParams,
             error.response,
             this.page,
             this.optimisticId,
-            this.navigationGeneration,
           )
 
           return this.response.handle()
@@ -164,18 +131,23 @@ export class Request {
       })
       .catch((error) => {
         // Handle cancelled requests
-        if (error instanceof HttpCancelledError || !navigation.isCurrent(this.navigationGeneration)) {
+        if (error instanceof HttpCancelledError) {
           return
         }
 
-        if (
-          this.requestParams.all().onNetworkError(error) === false ||
-          !navigation.isCurrent(this.navigationGeneration)
-        ) {
+        if (!this.context.navigation.active) {
+          if (originallyPrefetch) {
+            this.requestParams.onPrefetchError(new HttpCancelledError())
+          }
+
           return
         }
 
-        if (fireNetworkErrorEvent(error) && navigation.isCurrent(this.navigationGeneration)) {
+        if (this.requestParams.all().onNetworkError(error) === false) {
+          return
+        }
+
+        if (this.context.events.fireNetworkErrorEvent(error)) {
           if (originallyPrefetch) {
             this.requestParams.onPrefetchError(error)
           }
@@ -209,12 +181,12 @@ export class Request {
 
     this.requestHasFinished = true
 
-    fireFinishEvent(this.requestParams.all())
+    this.context.events.fireFinishEvent(this.requestParams.all())
     this.requestParams.onFinish()
   }
 
   public cancel({ cancelled = false, interrupted = false }: { cancelled?: boolean; interrupted?: boolean }): void {
-    if (this.requestHasFinished) {
+    if (this.requestHasFinished || this.requestParams.wasCancelledAtAll()) {
       // If the request has already finished, there's no need to cancel it
       return
     }
@@ -227,23 +199,16 @@ export class Request {
 
     this.cancelToken.abort()
 
-    this.requestParams.markAsCancelled({ cancelled, interrupted })
-
-    this.fireFinishEvents()
+    try {
+      this.requestParams.markAsCancelled({ cancelled, interrupted })
+    } finally {
+      this.fireFinishEvents()
+    }
   }
 
   protected onProgress(progress: HttpProgressEvent): void {
-    if (!navigation.isCurrent(this.navigationGeneration)) {
-      return
-    }
-
     if (this.requestParams.data() instanceof FormData) {
-      fireProgressEvent(progress)
-
-      if (!navigation.isCurrent(this.navigationGeneration)) {
-        return
-      }
-
+      this.context.events.fireProgressEvent(progress)
       this.requestParams.all().onProgress(progress)
     }
   }
@@ -256,7 +221,7 @@ export class Request {
       'X-Inertia': true,
     }
 
-    const page = currentPage.get()
+    const page = this.context.page.get()
 
     if (page.version) {
       headers['X-Inertia-Version'] = page.version

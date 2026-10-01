@@ -1,6 +1,6 @@
-import { router } from '..'
 import debounce from '../debounce'
 import { useIntersectionObservers } from '../intersectionObservers'
+import { getCurrentContext } from '../routerGraph'
 import { UseInfiniteScrollElementManager } from '../types'
 
 const INFINITE_SCROLL_PAGE_KEY = 'infiniteScrollPage'
@@ -27,6 +27,7 @@ export const useInfiniteScrollElementManager = (options: {
   onItemIntersected: (element: HTMLElement) => void
   getPropName: () => string
 }): UseInfiniteScrollElementManager => {
+  const context = getCurrentContext()
   const intersectionObservers = useIntersectionObservers()
 
   let itemsObserver: IntersectionObserver
@@ -36,6 +37,10 @@ export const useInfiniteScrollElementManager = (options: {
   let triggersEnabled = false
 
   const setupObservers = () => {
+    if (!context.navigation.active) {
+      return
+    }
+
     // Watch for manually added DOM elements (not from server responses)
     // This mutation observer tracks when new elements are added to the slot,
     // so we can distinguish between user-added content and server-loaded pages
@@ -53,7 +58,9 @@ export const useInfiniteScrollElementManager = (options: {
       rememberElementsDebounced()
     })
 
-    itemsMutationObserver.observe(options.getItemsElement(), { childList: true })
+    itemsMutationObserver.observe(options.getItemsElement(), {
+      childList: true,
+    })
 
     // Track individual items entering/leaving viewport for URL synchronization
     // When items become visible, we update the URL to reflect the current page
@@ -74,6 +81,10 @@ export const useInfiniteScrollElementManager = (options: {
   }
 
   const enableTriggers = () => {
+    if (!context.navigation.active) {
+      return
+    }
+
     if (triggersEnabled) {
       // Make sure we don't register multiple watchers
       disableTriggers()
@@ -121,6 +132,10 @@ export const useInfiniteScrollElementManager = (options: {
     !(INFINITE_SCROLL_PAGE_KEY in element.dataset) && !(INFINITE_SCROLL_IGNORE_KEY in element.dataset)
 
   const processManuallyAddedElements = () => {
+    if (!context.navigation.active) {
+      return
+    }
+
     // Tag manually added elements so they don't interfere with URL management
     // These elements get marked as "ignore" since they weren't loaded from the server
     Array.from(addedElements).forEach((element) => {
@@ -145,11 +160,15 @@ export const useInfiniteScrollElementManager = (options: {
   let hasRestoredElements = false
 
   const processServerLoadedElements = (loadedPage: string | number | null) => {
+    if (!context.navigation.active) {
+      return
+    }
+
     // On first run, try to restore the elements tags from browser history
     if (!hasRestoredElements) {
       hasRestoredElements = true
 
-      if (restoreElements()) {
+      if (restoreElements() || !context.navigation.active) {
         return
       }
     }
@@ -172,6 +191,10 @@ export const useInfiniteScrollElementManager = (options: {
   // Remember in browser history which elements belong to which page, so we can restore
   // them on back/forward navigation and keep URL synchronization working correctly
   const rememberElements = () => {
+    if (!context.navigation.active) {
+      return
+    }
+
     const pageElementRange: Record<string, ElementRange> = {}
     const childNodes = options.getItemsElement().childNodes
 
@@ -195,15 +218,17 @@ export const useInfiniteScrollElementManager = (options: {
       }
     }
 
-    router.remember(pageElementRange, getElementsRememberKey())
+    context.router.remember(pageElementRange, getElementsRememberKey())
   }
 
   const rememberElementsDebounced = debounce(rememberElements, 250)
 
   const restoreElements = (): boolean => {
-    const pageElementRange = router.restore(getElementsRememberKey()) as Record<string, ElementRange> | undefined
+    const pageElementRange = context.router.restore(getElementsRememberKey()) as
+      | Record<string, ElementRange>
+      | undefined
 
-    if (!pageElementRange || typeof pageElementRange !== 'object') {
+    if (!context.navigation.active || !pageElementRange || typeof pageElementRange !== 'object') {
       return false
     }
 

@@ -3,7 +3,7 @@
 // and transform a visit's outgoing request and incoming response without coupling
 // the framework-agnostic HTTP client (`http`) to Inertia visit internals. Mirrors
 // the mechanism of `httpHandlers`, with the originating visit added as context.
-import { navigation } from './navigation'
+import type { RouterContext } from './routerContext'
 import type { HttpRequestConfig, HttpResponse, InternalActiveVisit } from './types'
 
 type VisitRequestHandler = (
@@ -33,12 +33,15 @@ class VisitInterceptors {
     }
   }
 
-  public async processRequest(visit: InternalActiveVisit, config: HttpRequestConfig): Promise<HttpRequestConfig> {
-    const generation = navigation.generation
+  public async processRequest(
+    context: RouterContext,
+    visit: InternalActiveVisit,
+    config: HttpRequestConfig,
+  ): Promise<HttpRequestConfig> {
     let result = config
 
     for (const handler of this.requestHandlers) {
-      if (!navigation.isCurrent(generation)) {
+      if (!context.navigation.active) {
         return result
       }
 
@@ -48,12 +51,15 @@ class VisitInterceptors {
     return result
   }
 
-  public async processResponse(visit: InternalActiveVisit, response: HttpResponse): Promise<HttpResponse> {
-    const generation = navigation.generation
+  public async processResponse(
+    context: RouterContext,
+    visit: InternalActiveVisit,
+    response: HttpResponse,
+  ): Promise<HttpResponse> {
     let result = response
 
     for (const handler of this.responseHandlers) {
-      if (!navigation.isCurrent(generation)) {
+      if (!context.navigation.active) {
         return result
       }
 

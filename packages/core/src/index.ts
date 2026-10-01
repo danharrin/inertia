@@ -1,5 +1,6 @@
 import { Config } from './config'
 import { Router } from './router'
+import { router } from './routerFacade'
 
 export { UseFormUtils } from './useFormUtils'
 
@@ -43,4 +44,4 @@ export {
 export { XhrHttpClient, xhrHttpClient } from './xhrHttpClient'
 export { type Config, type Router }
 
-export const router = new Router()
+export { router }

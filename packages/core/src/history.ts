@@ -1,23 +1,29 @@
 import { cloneDeep, isEqual } from 'es-toolkit'
 import { decryptHistory, encryptHistory, historySessionStorageKeys } from './encryption'
-import { eventHandler } from './eventHandler'
-import { navigation } from './navigation'
-import { page as currentPage } from './page'
 import Queue from './queue'
+import type { RouterContext } from './routerContext'
 import { SessionStorage } from './sessionStorage'
 import { Page, ScrollRegion } from './types'
 
 const isServer = typeof window === 'undefined'
-const queue = new Queue<Promise<void>>()
 const isChromeIOS = !isServer && /CriOS/.test(window.navigator.userAgent)
 
-class History {
+// Native history writes share encryption keys in session storage across mounts.
+const queue = new Queue<Promise<void>>()
+
+export class History {
+  constructor(protected context: RouterContext) {}
   public rememberedState = 'rememberedState' as const
   public scrollRegions = 'scrollRegions' as const
   public preserveUrl = false
   protected current: Partial<Page> = {}
   // We need initialState for `restore`
   protected initialState: Partial<Page> | null = null
+
+  public inherit(history: History): void {
+    this.current = cloneDeep(history.current)
+    this.initialState = cloneDeep(history.initialState)
+  }
 
   public reset(): void {
     this.current = {}
@@ -26,24 +32,32 @@ class History {
   }
 
   public remember(data: unknown, key: string): void {
-    if (navigation.external?.remember) {
-      navigation.external.remember(data, key)
+    if (!this.context.navigation.active) {
+      return
+    }
+
+    if (this.context.navigation.external?.remember) {
+      this.context.navigation.external.remember(data, key)
 
       return
     }
 
     this.replaceState({
-      ...currentPage.getWithoutFlashData(),
+      ...this.context.page.getWithoutFlashData(),
       rememberedState: {
-        ...(currentPage.get()?.rememberedState ?? {}),
+        ...(this.context.page.get()?.rememberedState ?? {}),
         [key]: data,
       },
     })
   }
 
   public restore(key: string): unknown {
-    if (navigation.external?.restore) {
-      return navigation.external.restore(key)
+    if (!this.context.navigation.active) {
+      return
+    }
+
+    if (this.context.navigation.external?.restore) {
+      return this.context.navigation.external.restore(key)
     }
 
     if (!isServer) {
@@ -54,7 +68,7 @@ class History {
   }
 
   public pushState(page: Page, cb: (() => void) | null = null): void {
-    if (navigation.external) {
+    if (this.context.navigation.external) {
       this.current = page
       cb?.()
 
@@ -117,7 +131,7 @@ class History {
 
   public decrypt(page: Page | null = null): Promise<Page> {
     if (isServer) {
-      return Promise.resolve(page ?? currentPage.get())
+      return Promise.resolve(page ?? this.context.page.get())
     }
 
     const pageData = page ?? window.history.state?.page
@@ -196,9 +210,9 @@ class History {
     // Exclude flash from the merge to prevent callers (like router.remember())
     // from accidentally clearing flash data on the current page.
     const { flash, ...pageWithoutFlash } = page
-    currentPage.merge(pageWithoutFlash)
+    this.context.page.merge(pageWithoutFlash)
 
-    if (navigation.external) {
+    if (this.context.navigation.external) {
       this.current = page
       cb?.()
 
@@ -268,6 +282,10 @@ class History {
     url?: string,
   ): Promise<void> {
     return this.withThrottleProtection(() => {
+      if (!this.context.navigation.active) {
+        return
+      }
+
       window.history.replaceState(
         {
           ...data,
@@ -289,6 +307,10 @@ class History {
     url: string,
   ): Promise<void> {
     return this.withThrottleProtection(() => {
+      if (!this.context.navigation.active) {
+        return
+      }
+
       try {
         window.history.pushState(data, '', url)
       } catch (error) {
@@ -296,7 +318,7 @@ class History {
           throw error
         }
 
-        eventHandler.fireInternalEvent('historyQuotaExceeded', url)
+        this.context.eventHandler.fireInternalEvent('historyQuotaExceeded', url)
       }
     })
   }
@@ -323,7 +345,7 @@ class History {
   }
 
   public clear() {
-    if (navigation.external) {
+    if (this.context.navigation.external || !this.context.navigation.active) {
       return
     }
 
@@ -343,5 +365,3 @@ class History {
     return this.current as Page
   }
 }
-
-export const history = new History()

@@ -1,15 +1,12 @@
 import { cloneDeep } from 'es-toolkit'
 import { get, set } from 'es-toolkit/compat'
-import { eventHandler } from './eventHandler'
-import { fireNavigateEvent } from './events'
-import { history } from './history'
-import { navigation } from './navigation'
-import { prefetchedRequests } from './prefetched'
-import { Scroll } from './scroll'
+import type { RouterContext } from './routerContext'
 import { Component, FlashData, Page, PageEvent, PageHandler, PageResolver, RouterInitParams, Visit } from './types'
 import { hrefToUrl, isSameUrlWithoutHash } from './url'
 
-class CurrentPage {
+export class CurrentPage {
+  constructor(protected context: RouterContext) {}
+
   protected page!: Page
   protected swapComponent!: PageHandler<any>
   protected resolveComponent!: PageResolver
@@ -24,7 +21,10 @@ class CurrentPage {
   protected pendingDeferredProps: Pick<Page, 'deferredProps' | 'url' | 'component'> | null = null
   protected historyQuotaExceeded = false
   protected optimisticBaseline: Partial<Page['props']> = {}
-  protected pendingOptimistics: { id: number; callback: (props: Page['props']) => Partial<Page['props']> | void }[] = []
+  protected pendingOptimistics: {
+    id: number
+    callback: (props: Page['props']) => Partial<Page['props']> | void
+  }[] = []
   protected optimisticCounter = 0
   protected confirmedOptimisticId = 0
   protected removeHistoryQuotaExceededListener: VoidFunction = () => {}
@@ -35,12 +35,16 @@ class CurrentPage {
     resolveComponent,
     onFlash,
   }: RouterInitParams<ComponentType>) {
-    this.page = { ...initialPage, flash: initialPage.flash ?? {}, rescuedProps: initialPage.rescuedProps ?? [] }
+    this.page = {
+      ...initialPage,
+      flash: initialPage.flash ?? {},
+      rescuedProps: initialPage.rescuedProps ?? [],
+    }
     this.swapComponent = swapComponent
     this.resolveComponent = resolveComponent
     this.onFlashCallback = onFlash
 
-    this.removeHistoryQuotaExceededListener = eventHandler.on('historyQuotaExceeded', () => {
+    this.removeHistoryQuotaExceededListener = this.context.eventHandler.on('historyQuotaExceeded', () => {
       this.historyQuotaExceeded = true
     })
 
@@ -78,6 +82,10 @@ class CurrentPage {
       visitId?: string
     } = {},
   ): Promise<void> {
+    if (!this.context.navigation.active) {
+      return Promise.resolve()
+    }
+
     if (Object.keys(page.deferredProps || {}).length) {
       this.pendingDeferredProps = {
         deferredProps: page.deferredProps,
@@ -96,7 +104,7 @@ class CurrentPage {
     const componentId = this.componentId
 
     if (page.clearHistory) {
-      history.clear()
+      this.context.history.clear()
     }
 
     return this.resolve(page.component, page).then((component) => {
@@ -109,14 +117,16 @@ class CurrentPage {
 
       const isServer = typeof window === 'undefined'
       const location = !isServer ? window.location : new URL(page.url)
-      const scrollRegions = !isServer && preserveScroll ? Scroll.getScrollRegions() : []
+      const scrollRegions = !isServer && preserveScroll ? this.context.scroll.getScrollRegions() : []
       replace = replace || isSameUrlWithoutHash(hrefToUrl(page.url), location)
 
       // Clear flash data from the page object, we don't want it when navigating back/forward...
       const pageForHistory = { ...page, flash: {} }
 
       return new Promise<void>((resolve) =>
-        replace ? history.replaceState(pageForHistory, resolve) : history.pushState(pageForHistory, resolve),
+        replace
+          ? this.context.history.replaceState(pageForHistory, resolve)
+          : this.context.history.pushState(pageForHistory, resolve),
       ).then(() => {
         if (componentId !== this.componentId) {
           return
@@ -133,7 +143,7 @@ class CurrentPage {
         this.cleared = false
 
         if (this.hasOnceProps()) {
-          prefetchedRequests.updateCachedOncePropsFromCurrentPage()
+          this.context.prefetchedRequests.updateCachedOncePropsFromCurrentPage()
         }
 
         if (isNewComponent) {
@@ -172,13 +182,15 @@ class CurrentPage {
             return
           }
 
-          if (!navigation.external && preserveScroll) {
+          if (!this.context.navigation.external && preserveScroll) {
             // Scroll regions must be explicitly restored since the DOM elements are destroyed
             // and recreated during the component 'swap'. Document scroll is naturally
             // preserved as the document element itself persists across navigations.
-            window.requestAnimationFrame(() => Scroll.restoreScrollRegions(scrollRegions))
-          } else if (!navigation.external) {
-            Scroll.reset()
+            window.requestAnimationFrame(
+              this.context.callback(() => this.context.scroll.restoreScrollRegions(scrollRegions)),
+            )
+          } else if (!this.context.navigation.external) {
+            this.context.scroll.reset()
           }
 
           const pendingDeferredProps = this.pendingDeferredProps
@@ -189,7 +201,7 @@ class CurrentPage {
             pendingDeferredProps.component === page.component &&
             pendingDeferredProps.url === page.url
           ) {
-            eventHandler.fireInternalEvent('loadDeferredProps', pendingDeferredProps.deferredProps)
+            this.context.eventHandler.fireInternalEvent('loadDeferredProps', pendingDeferredProps.deferredProps)
           }
 
           if (componentId !== this.componentId) {
@@ -197,7 +209,7 @@ class CurrentPage {
           }
 
           if (!replace) {
-            fireNavigateEvent(page, { cached, visitId })
+            this.context.events.fireNavigateEvent(page, { cached, visitId })
           }
         })
       })
@@ -212,18 +224,26 @@ class CurrentPage {
       preserveState?: boolean
     } = {},
   ) {
-    const generation = navigation.generation
     const componentId = this.componentId
 
+    if (!this.context.navigation.active) {
+      return Promise.resolve()
+    }
+
     return this.resolve(page.component, page).then((component) => {
-      if (!navigation.isCurrent(generation) || componentId !== this.componentId) {
+      if (componentId !== this.componentId) {
         return
       }
 
       this.page = page
       this.cleared = false
-      history.setCurrent(page)
-      return this.swap({ component, page, preserveState, viewTransition: false })
+      this.context.history.setCurrent(page)
+      return this.swap({
+        component,
+        page,
+        preserveState,
+        viewTransition: false,
+      })
     })
   }
 
@@ -252,27 +272,34 @@ class CurrentPage {
   }
 
   public setPropsQuietly(props: Page['props']): Promise<unknown> {
-    const generation = navigation.generation
     const componentId = this.componentId
 
-    if (!navigation.isCurrent(generation)) {
+    if (!this.context.navigation.active) {
       return Promise.resolve()
     }
 
     this.page = { ...this.page, props }
 
     return this.resolve(this.page.component, this.page).then((component) => {
-      if (!navigation.isCurrent(generation) || componentId !== this.componentId) {
+      if (componentId !== this.componentId) {
         return
       }
 
-      return this.swap({ component, page: this.page, preserveState: true, viewTransition: false })
+      return this.swap({
+        component,
+        page: this.page,
+        preserveState: true,
+        viewTransition: false,
+      })
     })
   }
 
   public setFlash(flash: FlashData): void {
     this.page = { ...this.page, flash }
-    this.onFlashCallback?.(flash)
+
+    if (this.context.navigation.active) {
+      this.onFlashCallback?.(flash)
+    }
   }
 
   public setUrlHash(hash: string): void {
@@ -298,15 +325,19 @@ class CurrentPage {
     viewTransition: Visit['viewTransition']
     initialRender?: boolean
   }): Promise<unknown> {
-    const generation = navigation.generation
     const componentId = this.componentId
 
     const doSwap = () => {
-      if (!navigation.isCurrent(generation) || componentId !== this.componentId) {
+      if (!this.context.navigation.active || componentId !== this.componentId) {
         return Promise.resolve()
       }
 
-      return this.swapComponent({ component, page, preserveState, initialRender })
+      return this.swapComponent({
+        component,
+        page,
+        preserveState,
+        initialRender,
+      })
     }
 
     if (!viewTransition || !document?.startViewTransition || document.visibilityState === 'hidden') {
@@ -333,7 +364,9 @@ class CurrentPage {
       ignoreSkippedTransition(transitionResult.finished)
       ignoreSkippedTransition(transitionResult.updateCallbackDone)
 
-      viewTransitionCallback(transitionResult)
+      if (this.context.navigation.active) {
+        viewTransitionCallback(transitionResult)
+      }
     })
   }
 
@@ -378,7 +411,6 @@ class CurrentPage {
   }
 
   public replayOptimistics(): Partial<Page['props']> {
-    const generation = navigation.generation
     const baselineKeys = Object.keys(this.optimisticBaseline)
 
     if (baselineKeys.length === 0) {
@@ -392,11 +424,11 @@ class CurrentPage {
     }
 
     for (const { callback } of this.pendingOptimistics) {
-      const result = callback(cloneDeep(props))
-
-      if (!navigation.isCurrent(generation)) {
+      if (!this.context.navigation.active) {
         return {}
       }
+
+      const result = callback(cloneDeep(props))
 
       if (result) {
         Object.assign(props, result)
@@ -427,10 +459,12 @@ class CurrentPage {
   }
 
   public on(event: PageEvent, callback: VoidFunction): VoidFunction {
-    this.listeners.push({ event, callback })
+    const listener = { event, callback: this.context.callback(callback) }
+
+    this.listeners.push(listener)
 
     return () => {
-      this.listeners = this.listeners.filter((listener) => listener.event !== event && listener.callback !== callback)
+      this.listeners = this.listeners.filter((registered) => registered !== listener)
     }
   }
 
@@ -453,5 +487,3 @@ class CurrentPage {
     })
   }
 }
-
-export const page = new CurrentPage()

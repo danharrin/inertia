@@ -1,10 +1,9 @@
 import { cloneDeep } from 'es-toolkit'
 import { get } from 'es-toolkit/compat'
 import { HttpCancelledError } from './httpErrors'
-import { navigation } from './navigation'
 import { objectsAreEqual } from './objectUtils'
-import { page as currentPage } from './page'
 import { Response } from './response'
+import type { RouterContext } from './routerContext'
 import { timeToMs } from './time'
 import {
   ActiveVisit,
@@ -17,7 +16,8 @@ import {
   PrefetchRemovalTimer,
 } from './types'
 
-class PrefetchedRequests {
+export class PrefetchedRequests {
+  constructor(protected context: RouterContext) {}
   protected cached: PrefetchedResponse[] = []
   protected inFlightRequests: InFlightPrefetch[] = []
   protected removalTimers: PrefetchRemovalTimer[] = []
@@ -28,7 +28,6 @@ class PrefetchedRequests {
     sendFunc: (params: InternalActiveVisit) => void,
     { cacheFor, cacheTags }: PrefetchOptions,
   ) {
-    const generation = navigation.generation
     const inFlight = this.findInFlight(params)
 
     if (inFlight) {
@@ -50,45 +49,35 @@ class PrefetchedRequests {
         onCancel: () => {
           cancelled = true
 
-          if (navigation.isCurrent(generation)) {
-            this.remove(params)
-            this.removeFromInFlight(params.id)
-            params.onCancel()
-          }
+          this.remove(params)
+          this.removeFromInFlight(params.id)
 
-          reject(new HttpCancelledError())
+          try {
+            params.onCancel()
+          } finally {
+            reject(new HttpCancelledError())
+          }
         },
         onError: (error) => {
-          if (navigation.isCurrent(generation)) {
-            this.remove(params)
-            params.onError(error)
-          }
+          this.remove(params)
 
-          reject(error)
-        },
-        onPrefetching(visitParams) {
-          if (navigation.isCurrent(generation)) {
-            params.onPrefetching(visitParams)
-          }
-        },
-        onPrefetched(response, visit) {
-          if (navigation.isCurrent(generation)) {
-            params.onPrefetched(response, visit)
+          try {
+            params.onError(error)
+          } finally {
+            reject(error)
           }
         },
         onPrefetchResponse(response) {
           resolve(response)
         },
         onPrefetchError: (error) => {
-          if (navigation.isCurrent(generation)) {
-            this.removeFromInFlight(params.id)
-          }
+          this.removeFromInFlight(params.id)
 
           reject(error)
         },
       })
     }).then((response) => {
-      if (!navigation.isCurrent(generation)) {
+      if (!this.context.navigation.active) {
         return response
       }
 
@@ -96,7 +85,7 @@ class PrefetchedRequests {
 
       const pageResponse = response.getPageResponse()
 
-      currentPage.mergeOncePropsIntoResponse(pageResponse)
+      this.context.page.mergeOncePropsIntoResponse(pageResponse)
 
       this.cached.push({
         params: { ...params },
@@ -121,7 +110,7 @@ class PrefetchedRequests {
       return response
     })
 
-    if (!cancelled && navigation.isCurrent(generation)) {
+    if (!cancelled) {
       this.inFlightRequests.push({
         params: { ...params },
         response: promise,
@@ -131,10 +120,6 @@ class PrefetchedRequests {
     }
 
     return promise.catch((error) => {
-      if (!navigation.isCurrent(generation)) {
-        return
-      }
-
       this.removeFromInFlight(params.id)
 
       if (!(error instanceof HttpCancelledError)) {
@@ -210,7 +195,7 @@ class PrefetchedRequests {
   }
 
   protected scheduleForRemoval(params: ActiveVisit, expiresIn: number) {
-    if (typeof window === 'undefined') {
+    if (typeof window === 'undefined' || !this.context.navigation.active) {
       return
     }
 
@@ -231,7 +216,6 @@ class PrefetchedRequests {
   }
 
   public use(prefetched: PrefetchedResponse | InFlightPrefetch, params: ActiveVisit) {
-    const generation = navigation.generation
     const id = `${params.url.pathname}-${Date.now()}-${Math.random().toString(36).substring(7)}`
 
     this.currentUseId = id
@@ -243,7 +227,7 @@ class PrefetchedRequests {
 
     return prefetched.response.then(
       (response) => {
-        if (!navigation.isCurrent(generation) || this.currentUseId !== id) {
+        if (this.currentUseId !== id) {
           // They've since gone on to `use` a different request,
           // so we should ignore this one
           return
@@ -258,7 +242,7 @@ class PrefetchedRequests {
         return response.handle()
       },
       (error) => {
-        if (!navigation.isCurrent(generation)) {
+        if (!this.context.navigation.active) {
           return
         }
 
@@ -268,7 +252,7 @@ class PrefetchedRequests {
 
         consumedParams.onCancel()
 
-        if (!navigation.isCurrent(generation)) {
+        if (!this.context.navigation.active) {
           return
         }
 
@@ -348,17 +332,13 @@ class PrefetchedRequests {
   }
 
   public updateCachedOncePropsFromCurrentPage(): void {
-    const generation = navigation.generation
-
     this.cached.forEach((prefetched) => {
       prefetched.response.then((response) => {
-        if (!navigation.isCurrent(generation)) {
-          return
-        }
-
         const pageResponse = response.getPageResponse()
 
-        currentPage.mergeOncePropsIntoResponse(pageResponse, { force: true })
+        this.context.page.mergeOncePropsIntoResponse(pageResponse, {
+          force: true,
+        })
 
         for (const [group, deferredProps] of Object.entries(pageResponse.deferredProps ?? {})) {
           const remaining = deferredProps.filter((prop) => get(pageResponse.props, prop) === undefined)
@@ -400,5 +380,3 @@ class PrefetchedRequests {
     return Math.min(...expiryTimestamps) - Date.now()
   }
 }
-
-export const prefetchedRequests = new PrefetchedRequests()

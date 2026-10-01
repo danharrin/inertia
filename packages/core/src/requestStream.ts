@@ -36,7 +36,19 @@ export class RequestStream {
             return (prefetch || !request.isPrefetch()) && (optimistic || !request.isOptimistic())
           }
 
-    this.requests.filter(shouldCancel).forEach((request) => request.cancel({ cancelled: true }))
+    const errors: unknown[] = []
+
+    this.requests.filter(shouldCancel).forEach((request) => {
+      try {
+        request.cancel({ cancelled: true })
+      } catch (error) {
+        errors.push(error)
+      }
+    })
+
+    if (errors.length > 0) {
+      throw errors[0]
+    }
   }
 
   protected cancel({ cancelled = false, interrupted = false } = {}, force: boolean = false): void {

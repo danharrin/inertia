@@ -1,6 +1,5 @@
-import { navigation } from './navigation'
-import { page as currentPage } from './page'
 import { Response } from './response'
+import type { RouterContext } from './routerContext'
 import {
   ActiveVisit,
   HttpRequestHeaders,
@@ -18,7 +17,10 @@ export class RequestParams {
 
   protected params: InternalActiveVisit
 
-  constructor(params: InternalActiveVisit) {
+  constructor(
+    protected context: RouterContext,
+    params: InternalActiveVisit,
+  ) {
     if (!params.prefetch) {
       this.params = params
     } else {
@@ -48,8 +50,8 @@ export class RequestParams {
     }
   }
 
-  public static create(params: ActiveVisit): RequestParams {
-    return new RequestParams(params)
+  public static create(context: RouterContext, params: ActiveVisit): RequestParams {
+    return new RequestParams(context, params)
   }
 
   public data() {
@@ -89,11 +91,11 @@ export class RequestParams {
   }
 
   public markAsCancelled({ cancelled = true, interrupted = false }) {
-    this.params.onCancel()
-
     this.params.completed = false
     this.params.cancelled = cancelled
     this.params.interrupted = interrupted
+
+    this.params.onCancel()
   }
 
   public wasCancelledAtAll() {
@@ -134,7 +136,7 @@ export class RequestParams {
     }
 
     if (this.isPartial()) {
-      headers['X-Inertia-Partial-Component'] = currentPage.get().component
+      headers['X-Inertia-Partial-Component'] = this.context.page.get().component
     }
 
     const only = this.params.only.concat(this.params.reset)
@@ -159,11 +161,14 @@ export class RequestParams {
   }
 
   public setPreserveOptions(page: Page) {
-    const generation = navigation.generation
+    if (!this.context.navigation.active) {
+      return
+    }
 
     this.params.preserveScroll = RequestParams.resolvePreserveOption(this.params.preserveScroll, page)
 
-    if (!navigation.isCurrent(generation)) {
+    // Preserve callbacks produce values and can dispose the owner while running.
+    if (!this.context.navigation.active) {
       return
     }
 
@@ -171,10 +176,8 @@ export class RequestParams {
   }
 
   public runCallbacks() {
-    const generation = navigation.generation
-
     this.callbacks.forEach(({ name, args }) => {
-      if (!navigation.isCurrent(generation)) {
+      if (!this.context.navigation.active) {
         return
       }
 
@@ -194,6 +197,7 @@ export class RequestParams {
     // @ts-ignore
     return (...args) => {
       this.recordCallback(name, args)
+
       // @ts-ignore
       params[name](...args)
     }

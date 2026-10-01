@@ -347,6 +347,74 @@ for (const setup of ['automatic', 'custom']) {
   })
 }
 
+test('keeps saved router methods and extensions usable after replacing a mount', async ({ page }) => {
+  await page.goto('/external-navigation/1')
+  await expect(page.getByText('Details for report 1', { exact: true })).toBeVisible()
+
+  await page.evaluate(() => {
+    const router = Object.assign(window.testing.Inertia, { reportName: () => 'Revenue' })
+    const { reload, optimistic } = router
+
+    document.addEventListener('refresh-current-report', () => {
+      document.body.dataset.sameRouter = String(optimistic(() => ({})) === router)
+      document.body.dataset.sameMethod = String(router.reload === reload)
+      document.body.dataset.reportName = router.reportName()
+      document.body.dataset.activePolls = String(router.activePolls)
+      reload({ only: ['total'] })
+    })
+  })
+
+  await page.getByRole('button', { name: 'Open second report' }).click()
+  await expect(page.getByText('Details for report 2', { exact: true })).toBeVisible()
+  await page.evaluate(() => document.dispatchEvent(new Event('refresh-current-report')))
+
+  await expect(page.getByText('Total: 201', { exact: true })).toBeVisible()
+  await expect(page.locator('body')).toHaveAttribute('data-same-router', 'true')
+  await expect(page.locator('body')).toHaveAttribute('data-same-method', 'true')
+  await expect(page.locator('body')).toHaveAttribute('data-report-name', 'Revenue')
+  await expect(page.locator('body')).toHaveAttribute('data-active-polls', '0')
+})
+
+test('finishes cancelling other requests when a cancellation callback throws', async ({ page }) => {
+  await page.goto('/external-navigation/1')
+  await expect(page.getByText('Details for report 1', { exact: true })).toBeVisible()
+
+  await page.evaluate(() => {
+    const router = window.testing.Inertia
+
+    for (const name of ['first', 'second']) {
+      router.reload({
+        only: ['total'],
+        onCancel: () => {
+          router.cancelAll()
+
+          if (name === 'first') {
+            throw new Error('Cancellation failed')
+          }
+        },
+        onFinish: () => {
+          document.body.dataset[name] = String(Number(document.body.dataset[name] || 0) + 1)
+        },
+      })
+    }
+
+    try {
+      router.cancelAll()
+    } catch (error) {
+      document.body.dataset.cancelError = (error as Error).message
+    }
+  })
+
+  await expect(page.locator('body')).toHaveAttribute('data-first', '1')
+  await expect(page.locator('body')).toHaveAttribute('data-second', '1')
+  await expect(page.locator('body')).toHaveAttribute('data-cancel-error', 'Cancellation failed')
+
+  await page.getByRole('button', { name: 'Open second report' }).click()
+  await expect(page.getByText('Details for report 2', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Refresh total' }).click()
+  await expect(page.getByText('Total: 201', { exact: true })).toBeVisible()
+})
+
 test('does not restart an outgoing poll in a replacement mount', async ({ page }) => {
   await page.goto('/external-navigation/1')
 
@@ -472,6 +540,34 @@ for (const closeOnCancel of [false, true]) {
     expect(errors).toEqual([])
   })
 }
+
+test('stops replaying a cached visit when its start callback closes the mount', async ({ page }) => {
+  await page.goto('/external-navigation/1')
+  await expect(page.getByText('Details for report 1', { exact: true })).toBeVisible()
+
+  await page.evaluate(() => window.testing.Inertia.prefetch('/external-navigation/1?preview', { only: ['total'] }))
+  await expect
+    .poll(() =>
+      page.evaluate(() => !!window.testing.Inertia.getCached('/external-navigation/1?preview', { only: ['total'] })),
+    )
+    .toBe(true)
+
+  await page.evaluate(() => {
+    window.testing.Inertia.visit('/external-navigation/1?preview', {
+      only: ['total'],
+      async: true,
+      onStart: () => document.getElementById('leave')!.click(),
+      onFinish: () => {
+        document.body.dataset.visitFinished = 'true'
+      },
+    })
+  })
+
+  await expect(page.locator('#app')).toBeEmpty()
+  await page.getByRole('button', { name: 'Open second report' }).click()
+  await expect(page.getByText('Details for report 2', { exact: true })).toBeVisible()
+  await expect(page.locator('body')).not.toHaveAttribute('data-visit-finished')
+})
 
 test('loads more items without letting infinite scroll navigate the host', async ({ page }) => {
   await page.goto('/external-navigation/scroll')

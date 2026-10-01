@@ -1,17 +1,8 @@
-import { hrefToUrl, router, urlHasProtocol, urlToString } from '..'
 import debounce from '../debounce'
 import { getElementsInViewportFromCollection } from '../domUtils'
-import { navigation } from '../navigation'
-import { page as currentPage } from './../page'
-import Queue from './../queue'
+import { getCurrentContext } from '../routerGraph'
+import { hrefToUrl, urlHasProtocol, urlToString } from '../url'
 import { getPageFromElement } from './elements'
-
-// Shared queue among all instances to ensure URL updates are processed sequentially
-const queue = new Queue<Promise<void>>()
-
-let initialUrl: URL | null
-let payloadUrl: URL | null
-let initialUrlWasAbsolute: boolean | null = null
 
 /**
  * As users scroll through infinite content, this system updates the URL to reflect
@@ -23,26 +14,27 @@ export const useInfiniteScrollQueryString = (options: {
   getItemsElement: () => HTMLElement
   shouldPreserveUrl: () => boolean
 }) => {
+  const context = getCurrentContext()
   let enabled = true
 
   const queuePageUpdate = (page: string) => {
-    queue
+    context.infiniteScrollQueue
       .add(() => {
         return new Promise((resolve) => {
-          if (!enabled || navigation.external) {
-            initialUrl = payloadUrl = null
+          if (!enabled || !context.navigation.active || context.navigation.external) {
+            context.infiniteScrollInitialUrl = context.infiniteScrollPayloadUrl = null
             return resolve()
           }
 
-          if (!initialUrl || !payloadUrl) {
-            const currentPageUrl = currentPage.get().url
-            initialUrl = hrefToUrl(currentPageUrl)
-            payloadUrl = hrefToUrl(currentPageUrl)
-            initialUrlWasAbsolute = urlHasProtocol(currentPageUrl)
+          if (!context.infiniteScrollInitialUrl || !context.infiniteScrollPayloadUrl) {
+            const currentPageUrl = context.page.get().url
+            context.infiniteScrollInitialUrl = hrefToUrl(currentPageUrl)
+            context.infiniteScrollPayloadUrl = hrefToUrl(currentPageUrl)
+            context.infiniteScrollInitialUrlWasAbsolute = urlHasProtocol(currentPageUrl)
           }
 
           const pageName = options.getPageName()
-          const searchParams = payloadUrl.searchParams
+          const searchParams = context.infiniteScrollPayloadUrl.searchParams
 
           // Clean URLs: don't show ?page=1 in the URL, just remove the parameter entirely
           if (page === '1') {
@@ -57,21 +49,25 @@ export const useInfiniteScrollQueryString = (options: {
       .finally(() => {
         if (
           enabled &&
-          !navigation.external &&
-          initialUrl &&
-          payloadUrl &&
-          initialUrl.href !== payloadUrl.href &&
-          initialUrlWasAbsolute !== null
+          context.navigation.active &&
+          !context.navigation.external &&
+          context.infiniteScrollInitialUrl &&
+          context.infiniteScrollPayloadUrl &&
+          context.infiniteScrollInitialUrl.href !== context.infiniteScrollPayloadUrl.href &&
+          context.infiniteScrollInitialUrlWasAbsolute !== null
         ) {
           // Update URL without triggering a page reload or affecting scroll position
-          router.replace({
-            url: urlToString(payloadUrl, initialUrlWasAbsolute),
+          context.router.replace({
+            url: urlToString(context.infiniteScrollPayloadUrl, context.infiniteScrollInitialUrlWasAbsolute),
             preserveScroll: true,
             preserveState: true,
           })
         }
 
-        initialUrl = payloadUrl = initialUrlWasAbsolute = null
+        context.infiniteScrollInitialUrl =
+          context.infiniteScrollPayloadUrl =
+          context.infiniteScrollInitialUrlWasAbsolute =
+            null
       })
   }
 
@@ -79,7 +75,14 @@ export const useInfiniteScrollQueryString = (options: {
   const onItemIntersected = debounce((itemElement: HTMLElement) => {
     const itemsElement = options.getItemsElement()
 
-    if (!enabled || navigation.external || options.shouldPreserveUrl() || !itemElement || !itemsElement) {
+    if (
+      !enabled ||
+      !context.navigation.active ||
+      context.navigation.external ||
+      options.shouldPreserveUrl() ||
+      !itemElement ||
+      !itemsElement
+    ) {
       return
     }
 

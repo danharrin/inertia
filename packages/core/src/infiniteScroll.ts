@@ -1,9 +1,9 @@
 import { requestAnimationFrame } from './domUtils'
-import { router } from './index'
 import { useInfiniteScrollData } from './infiniteScroll/data'
 import { useInfiniteScrollElementManager } from './infiniteScroll/elements'
 import { useInfiniteScrollQueryString } from './infiniteScroll/queryString'
 import { useInfiniteScrollPreservation } from './infiniteScroll/scrollPreservation'
+import { getCurrentContext } from './routerGraph'
 import { Page, ReloadOptions, UseInfiniteScrollOptions, UseInfiniteScrollProps } from './types'
 
 /**
@@ -17,7 +17,11 @@ import { Page, ReloadOptions, UseInfiniteScrollOptions, UseInfiniteScrollProps }
  * - Scroll preservation: Maintains scroll position during content updates
  */
 export default function useInfiniteScroll(options: UseInfiniteScrollOptions): UseInfiniteScrollProps {
-  const queryStringManager = useInfiniteScrollQueryString({ ...options, getPageName: () => dataManager.getPageName() })
+  const context = getCurrentContext()
+  const queryStringManager = useInfiniteScrollQueryString({
+    ...options,
+    getPageName: () => dataManager.getPageName(),
+  })
 
   // Create scroll preservation callbacks that capture and restore scroll position
   // and restore it after new content is prepended to maintain visual stability
@@ -38,17 +42,31 @@ export default function useInfiniteScroll(options: UseInfiniteScrollOptions): Us
     onBeforeUpdate: elementManager.processManuallyAddedElements,
     // After successful request, tag new server content
     onCompletePreviousRequest: (_, details) => {
+      if (!context.navigation.active) {
+        return
+      }
+
       options.onCompletePreviousRequest(details)
 
       if (details.completed) {
-        requestAnimationFrame(() => elementManager.processServerLoadedElements(details.page), 2)
+        requestAnimationFrame(
+          context.callback(() => elementManager.processServerLoadedElements(details.page)),
+          2,
+        )
       }
     },
     onCompleteNextRequest: (_, details) => {
+      if (!context.navigation.active) {
+        return
+      }
+
       options.onCompleteNextRequest(details)
 
       if (details.completed) {
-        requestAnimationFrame(() => elementManager.processServerLoadedElements(details.page), 2)
+        requestAnimationFrame(
+          context.callback(() => elementManager.processServerLoadedElements(details.page)),
+          2,
+        )
       }
     },
     onReset: options.onDataReset,
@@ -75,6 +93,10 @@ export default function useInfiniteScroll(options: UseInfiniteScrollOptions): Us
 
   const originalFetchNext = dataManager.fetchNext
   dataManager.fetchNext = (reloadOptions: ReloadOptions = {}) => {
+    if (!context.navigation.active) {
+      return
+    }
+
     reloadOptions = { ...options.getReloadOptions?.(), ...reloadOptions }
 
     if (options.inReverseMode()) {
@@ -86,6 +108,10 @@ export default function useInfiniteScroll(options: UseInfiniteScrollOptions): Us
 
   const originalFetchPrevious = dataManager.fetchPrevious
   dataManager.fetchPrevious = (reloadOptions: ReloadOptions = {}) => {
+    if (!context.navigation.active) {
+      return
+    }
+
     reloadOptions = { ...options.getReloadOptions?.(), ...reloadOptions }
 
     if (!options.inReverseMode()) {
@@ -95,7 +121,10 @@ export default function useInfiniteScroll(options: UseInfiniteScrollOptions): Us
     originalFetchPrevious(reloadOptions)
   }
 
-  const removeEventListener = router.on('success', () => requestAnimationFrame(elementManager.refreshTriggers, 2))
+  const removeEventListener = context.router.on(
+    'success',
+    context.callback(() => requestAnimationFrame(context.callback(elementManager.refreshTriggers), 2)),
+  )
 
   return {
     dataManager,

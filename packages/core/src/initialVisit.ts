@@ -1,17 +1,17 @@
-import { eventHandler } from './eventHandler'
-import { fireFlashEvent, fireNavigateEvent } from './events'
-import { history } from './history'
-import { navigation } from './navigation'
 import { navigationType } from './navigationType'
-import { page as currentPage } from './page'
-import { Scroll } from './scroll'
+import type { RouterContext } from './routerContext'
 import { SessionStorage } from './sessionStorage'
 import { LocationVisit, Page } from './types'
 import { uid } from './uid'
 
 export class InitialVisit {
-  public static handle(): void {
-    if (navigation.external) {
+  constructor(protected context: RouterContext) {}
+  public handle(): void {
+    if (!this.context.navigation.active) {
+      return
+    }
+
+    if (this.context.navigation.external) {
       this.handleDefault()
 
       return
@@ -24,37 +24,39 @@ export class InitialVisit {
     scenarios.find((handler) => handler.bind(this)())
   }
 
-  protected static clearRememberedStateOnReload(): void {
+  protected clearRememberedStateOnReload(): void {
     if (navigationType.isReload()) {
-      history.deleteState(history.rememberedState)
-      history.clearInitialState(history.rememberedState)
+      this.context.history.deleteState(this.context.history.rememberedState)
+      this.context.history.clearInitialState(this.context.history.rememberedState)
     }
   }
 
-  protected static handleBackForward(): boolean {
-    if (!navigationType.isBackForward() || !history.browserHasHistoryEntry()) {
+  protected handleBackForward(): boolean {
+    if (!navigationType.isBackForward() || !this.context.history.browserHasHistoryEntry()) {
       return false
     }
 
-    const scrollRegions = history.getScrollRegions()
+    const scrollRegions = this.context.history.getScrollRegions()
 
-    history
+    this.context.history
       .decrypt()
       .then((data) => {
-        if (currentPage.get().version !== data.version) {
+        if (this.context.page.get().version !== data.version) {
           this.handleDefault()
           return
         }
 
         const visitId = uid()
 
-        currentPage.set(data, { preserveScroll: true, preserveState: true, visitId }).then(() => {
-          Scroll.restore(scrollRegions)
-          fireNavigateEvent(currentPage.get(), { visitId })
+        this.context.page.set(data, { preserveScroll: true, preserveState: true, visitId }).then(() => {
+          this.context.scroll.restore(scrollRegions)
+          this.context.events.fireNavigateEvent(this.context.page.get(), {
+            visitId,
+          })
         })
       })
       .catch(() => {
-        eventHandler.onMissingHistoryItem()
+        this.context.eventHandler.onMissingHistoryItem()
       })
 
     return true
@@ -63,7 +65,7 @@ export class InitialVisit {
   /**
    * @link https://inertiajs.com/redirects#external-redirects
    */
-  protected static handleLocation(): boolean {
+  protected handleLocation(): boolean {
     if (!SessionStorage.exists(SessionStorage.locationVisitKey)) {
       return false
     }
@@ -73,19 +75,22 @@ export class InitialVisit {
     SessionStorage.remove(SessionStorage.locationVisitKey)
 
     if (typeof window !== 'undefined') {
-      currentPage.setUrlHash(window.location.hash)
+      this.context.page.setUrlHash(window.location.hash)
     }
 
-    history
-      .decrypt(currentPage.get())
+    this.context.history
+      .decrypt(this.context.page.get())
       .then(() => {
         const visitId = uid()
-        const rememberedState = history.getState<Page['rememberedState']>(history.rememberedState, {})
-        const scrollRegions = history.getScrollRegions()
-        currentPage.remember(rememberedState)
+        const rememberedState = this.context.history.getState<Page['rememberedState']>(
+          this.context.history.rememberedState,
+          {},
+        )
+        const scrollRegions = this.context.history.getScrollRegions()
+        this.context.page.remember(rememberedState)
 
-        currentPage
-          .set(currentPage.get(), {
+        this.context.page
+          .set(this.context.page.get(), {
             preserveScroll: locationVisit.preserveScroll,
             preserveState: true,
             initialRender: true,
@@ -93,62 +98,58 @@ export class InitialVisit {
           })
           .then(() => {
             if (locationVisit.preserveScroll) {
-              Scroll.restore(scrollRegions)
+              this.context.scroll.restore(scrollRegions)
             }
 
             this.fireInitialEvents(visitId)
           })
       })
       .catch(() => {
-        eventHandler.onMissingHistoryItem()
+        this.context.eventHandler.onMissingHistoryItem()
       })
 
     return true
   }
 
-  protected static handleDefault(): void {
-    const generation = navigation.generation
-
+  protected handleDefault(): void {
     if (typeof window !== 'undefined') {
-      currentPage.setUrlHash(window.location.hash)
+      this.context.page.setUrlHash(window.location.hash)
     }
 
     const visitId = uid()
 
-    currentPage
-      .set(currentPage.get(), { preserveScroll: true, preserveState: true, initialRender: true, visitId })
+    this.context.page
+      .set(this.context.page.get(), {
+        preserveScroll: true,
+        preserveState: true,
+        initialRender: true,
+        visitId,
+      })
       .then(() => {
-        if (!navigation.isCurrent(generation)) {
-          return
-        }
-
-        if (navigation.external) {
+        if (this.context.navigation.external) {
           this.fireInitialEvents(visitId)
 
           return
         }
 
         if (navigationType.isReload()) {
-          Scroll.restore(history.getScrollRegions())
+          this.context.scroll.restore(this.context.history.getScrollRegions())
         } else {
-          Scroll.scrollToAnchor()
+          this.context.scroll.scrollToAnchor()
         }
 
         this.fireInitialEvents(visitId)
       })
   }
 
-  protected static fireInitialEvents(visitId: string): void {
-    const generation = navigation.generation
-    const page = currentPage.get()
+  protected fireInitialEvents(visitId: string): void {
+    const page = this.context.page.get()
 
-    fireNavigateEvent(page, { visitId })
+    this.context.events.fireNavigateEvent(page, { visitId })
 
     if (Object.keys(page.flash).length > 0) {
       queueMicrotask(() => {
-        if (navigation.isCurrent(generation)) {
-          fireFlashEvent(page.flash)
-        }
+        this.context.events.fireFlashEvent(page.flash)
       })
     }
   }

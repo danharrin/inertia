@@ -5,6 +5,91 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/history/1')
 })
 
+test('keeps decrypted remembered state when initialization replaces the native router', async ({ page }) => {
+  await expect(page.getByText('This is page 1')).toBeVisible()
+
+  const restored = await page.evaluate(async () => {
+    const router = window.testing.Inertia
+    const initialPage = { ...window.history.state.page, rememberedState: { draft: 'Monthly revenue' } }
+
+    window.history.replaceState({ page: initialPage }, '', location.href)
+    await router.decryptHistory()
+
+    const dispose = router.init({
+      initialPage,
+      resolveComponent: () => {
+        router.init({
+          initialPage,
+          resolveComponent: () => ({}),
+          swapComponent: async () => {},
+        })
+
+        return {}
+      },
+      swapComponent: async () => {},
+    })
+
+    dispose()
+
+    return router.restore('draft')
+  })
+
+  expect(restored).toBe('Monthly revenue')
+})
+
+test('serializes encrypted history writes across native router replacement', async ({ page }) => {
+  await expect(page.getByText('This is page 1')).toBeVisible()
+
+  const restored = await page.evaluate(async () => {
+    const router = window.testing.Inertia
+    const initialPage = { ...window.history.state.page, encryptHistory: true }
+    const generateKey = crypto.subtle.generateKey.bind(crypto.subtle)
+    let generatedKeys = 0
+    let releaseKey!: () => void
+    let keyStarted!: () => void
+    const keyPending = new Promise<void>((resolve) => {
+      keyStarted = resolve
+    })
+    const keyReleased = new Promise<void>((resolve) => {
+      releaseKey = resolve
+    })
+
+    crypto.subtle.generateKey = (async (...args: Parameters<typeof generateKey>) => {
+      generatedKeys++
+      keyStarted()
+      await keyReleased
+
+      return generateKey(...args)
+    }) as typeof generateKey
+
+    const mount = (title: string) =>
+      new Promise<void>((resolve) => {
+        router.init({
+          initialPage: { ...initialPage, props: { ...initialPage.props, title } },
+          resolveComponent: () => ({}),
+          swapComponent: async () => {
+            resolve()
+          },
+        })
+      })
+
+    try {
+      void mount('Outgoing report')
+      await keyPending
+      const mounted = mount('Current report')
+      await new Promise((resolve) => setTimeout(resolve))
+      releaseKey()
+      await mounted
+
+      return { title: (await router.decryptHistory()).props.title, generatedKeys }
+    } finally {
+      crypto.subtle.generateKey = generateKey
+    }
+  })
+
+  expect(restored).toEqual({ title: 'Current report', generatedKeys: 1 })
+})
+
 test('it will not encrypt history by default', async ({ page }) => {
   const historyState1 = await page.evaluate(() => window.history.state)
   await expect(historyState1.page.component).toBe('History/Page')

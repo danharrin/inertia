@@ -1,42 +1,49 @@
 import { requestAnimationFrame } from './domUtils'
-import { history } from './history'
-import { navigation } from './navigation'
+import type { RouterContext } from './routerContext'
 import { ScrollRegion } from './types'
 
 const isServer = typeof window === 'undefined'
 const isFirefox = !isServer && /Firefox/i.test(window.navigator.userAgent)
 
 export class Scroll {
-  public static save(): void {
-    if (navigation.external || !navigation.active) {
+  constructor(protected context: RouterContext) {}
+  public save(): void {
+    if (this.context.navigation.external || !this.context.navigation.active) {
       return
     }
 
-    history.saveScrollPositions(this.getScrollRegions())
+    this.context.history.saveScrollPositions(this.getScrollRegions())
   }
 
-  public static getScrollRegions(): ScrollRegion[] {
+  public getScrollRegions(): ScrollRegion[] {
     return Array.from(this.regions()).map((region) => ({
       top: region.scrollTop,
       left: region.scrollLeft,
     }))
   }
 
-  protected static regions(): NodeListOf<Element> {
+  protected regions(): NodeListOf<Element> {
     return document.querySelectorAll('[scroll-region]')
   }
 
-  public static scrollToTop(): void {
+  public scrollToTop(): void {
+    if (!this.context.navigation.active) {
+      return
+    }
+
     if (isFirefox && getComputedStyle(document.documentElement).scrollBehavior === 'smooth') {
       // Firefox has a bug with smooth scrolling to (0, 0) when navigating to pages that are shorter than the previous page.
-      return requestAnimationFrame(() => window.scrollTo(0, 0), 2)
+      return requestAnimationFrame(
+        this.context.callback(() => window.scrollTo(0, 0)),
+        2,
+      )
     }
 
     window.scrollTo(0, 0)
   }
 
-  public static reset(): void {
-    if (navigation.external || !navigation.active) {
+  public reset(): void {
+    if (this.context.navigation.external || !this.context.navigation.active) {
       return
     }
 
@@ -60,32 +67,44 @@ export class Scroll {
     this.scrollToAnchor()
   }
 
-  public static scrollToAnchor(): void {
+  public scrollToAnchor(): void {
+    if (!this.context.navigation.active) {
+      return
+    }
+
     const anchorHash = isServer ? null : window.location.hash
 
     if (anchorHash) {
       // We're using a setTimeout() here as a workaround for a bug in the React adapter where the
       // rendering isn't completing fast enough, causing the anchor link to not be scrolled to.
       setTimeout(() => {
+        if (!this.context.navigation.active) {
+          return
+        }
+
         const anchorElement = document.getElementById(anchorHash.slice(1))
         anchorElement ? anchorElement.scrollIntoView() : this.scrollToTop()
       })
     }
   }
 
-  public static restore(scrollRegions: ScrollRegion[]): void {
+  public restore(scrollRegions: ScrollRegion[]): void {
     if (isServer) {
       return
     }
 
     window.requestAnimationFrame(() => {
+      if (!this.context.navigation.active) {
+        return
+      }
+
       this.restoreDocument()
       this.restoreScrollRegions(scrollRegions)
     })
   }
 
-  public static restoreScrollRegions(scrollRegions: ScrollRegion[]): void {
-    if (isServer) {
+  public restoreScrollRegions(scrollRegions: ScrollRegion[]): void {
+    if (isServer || !this.context.navigation.active) {
       return
     }
 
@@ -105,12 +124,16 @@ export class Scroll {
     })
   }
 
-  public static restoreDocument(): void {
-    const scrollPosition = history.getDocumentScrollPosition()
+  public restoreDocument(): void {
+    if (!this.context.navigation.active) {
+      return
+    }
+
+    const scrollPosition = this.context.history.getDocumentScrollPosition()
     window.scrollTo(scrollPosition.left, scrollPosition.top)
   }
 
-  public static onScroll(event: Event): void {
+  public onScroll(event: Event): void {
     const target = event.target as Element
 
     if (typeof target.hasAttribute === 'function' && target.hasAttribute('scroll-region')) {
@@ -118,8 +141,12 @@ export class Scroll {
     }
   }
 
-  public static onWindowScroll(): void {
-    history.saveDocumentScrollPosition({
+  public onWindowScroll(): void {
+    if (!this.context.navigation.active) {
+      return
+    }
+
+    this.context.history.saveDocumentScrollPosition({
       top: window.scrollY,
       left: window.scrollX,
     })

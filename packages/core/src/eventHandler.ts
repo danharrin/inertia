@@ -1,14 +1,11 @@
 import { get } from 'es-toolkit/compat'
 import debounce from './debounce'
-import { fireNavigateEvent } from './events'
-import { history } from './history'
-import { router } from './index'
-import { page as currentPage } from './page'
-import { Scroll } from './scroll'
+import type { RouterContext } from './routerContext'
 import { GlobalEvent, GlobalEventNames, GlobalEventResult, InternalEvent } from './types'
 import { hrefToUrl } from './url'
 
-class EventHandler {
+export class EventHandler {
+  constructor(protected context: RouterContext) {}
   protected internalListeners: {
     event: InternalEvent
     listener: (...args: any[]) => void
@@ -24,23 +21,33 @@ class EventHandler {
     const pageshow = this.handlePageshowEvent.bind(this)
     const windowScroll = debounce(() => {
       if (!controller.signal.aborted) {
-        Scroll.onWindowScroll()
+        this.context.scroll.onWindowScroll()
       }
     }, 100)
     const documentScroll = debounce((event: Event) => {
       if (!controller.signal.aborted) {
-        Scroll.onScroll(event)
+        this.context.scroll.onScroll(event)
       }
     }, 100)
 
     if (typeof window !== 'undefined') {
-      window.addEventListener('popstate', popstate, { signal: controller.signal })
-      window.addEventListener('pageshow', pageshow, { signal: controller.signal })
-      window.addEventListener('scroll', windowScroll, { capture: true, signal: controller.signal })
+      window.addEventListener('popstate', popstate, {
+        signal: controller.signal,
+      })
+      window.addEventListener('pageshow', pageshow, {
+        signal: controller.signal,
+      })
+      window.addEventListener('scroll', windowScroll, {
+        capture: true,
+        signal: controller.signal,
+      })
     }
 
     if (typeof document !== 'undefined') {
-      document.addEventListener('scroll', documentScroll, { capture: true, signal: controller.signal })
+      document.addEventListener('scroll', documentScroll, {
+        capture: true,
+        signal: controller.signal,
+      })
     }
 
     return () => controller.abort()
@@ -72,15 +79,19 @@ class EventHandler {
   public onMissingHistoryItem() {
     // At this point, the user has probably cleared the state
     // Mark the current page as cleared so that we don't try to write anything to it.
-    currentPage.clear()
+    this.context.page.clear()
     // Fire an event so that that any listeners can handle this situation
     this.fireInternalEvent('missingHistoryItem')
   }
 
   public fireInternalEvent(event: InternalEvent, ...args: any[]): void {
-    this.internalListeners
-      .filter((listener) => listener.event === event)
-      .forEach((listener) => listener.listener(...args))
+    for (const listener of this.internalListeners.filter((listener) => listener.event === event)) {
+      if (!this.context.navigation.active) {
+        return
+      }
+
+      listener.listener(...args)
+    }
   }
 
   protected registerListener(type: string, listener: EventListener): VoidFunction {
@@ -90,11 +101,11 @@ class EventHandler {
   }
 
   // bfcache restores pages without firing `popstate`, so we use `pageshow` to
-  // re-validate encrypted history entries after `clearHistory` removed the keys.
+  // re-validate encrypted history entries after `clearHistory()` removed the keys.
   // https://web.dev/articles/bfcache
   protected handlePageshowEvent(event: PageTransitionEvent): void {
     if (event.persisted) {
-      history.decrypt().catch(() => this.onMissingHistoryItem())
+      this.context.history.decrypt().catch(() => this.onMissingHistoryItem())
     }
   }
 
@@ -102,36 +113,39 @@ class EventHandler {
     const state = event.state || null
 
     if (state === null) {
-      const url = hrefToUrl(currentPage.get().url)
+      const url = hrefToUrl(this.context.page.get().url)
       url.hash = window.location.hash
 
-      history.replaceState({ ...currentPage.getWithoutFlashData(), url: url.href })
-      Scroll.reset()
+      this.context.history.replaceState({
+        ...this.context.page.getWithoutFlashData(),
+        url: url.href,
+      })
+      this.context.scroll.reset()
 
       return
     }
 
-    if (!history.isValidState(state)) {
+    if (!this.context.history.isValidState(state)) {
       return this.onMissingHistoryItem()
     }
 
-    history
+    this.context.history
       .decrypt(state.page)
       .then((data) => {
-        if (currentPage.get().version !== data.version) {
+        if (this.context.page.get().version !== data.version) {
           this.onMissingHistoryItem()
           return
         }
 
         // Cancel ongoing requests except prefetch requests
-        router.cancelAll({ prefetch: false })
+        this.context.router.cancelAll({ prefetch: false })
 
-        currentPage.setQuietly(data, { preserveState: false }).then(() => {
-          Scroll.restore(history.getScrollRegions())
-          fireNavigateEvent(currentPage.get())
+        this.context.page.setQuietly(data, { preserveState: false }).then(() => {
+          this.context.scroll.restore(this.context.history.getScrollRegions())
+          this.context.events.fireNavigateEvent(this.context.page.get())
 
           const pendingDeferred: Record<string, string[]> = {}
-          const pageProps = currentPage.get().props
+          const pageProps = this.context.page.get().props
 
           for (const [group, props] of Object.entries(data.initialDeferredProps ?? data.deferredProps ?? {})) {
             const missing = props.filter((prop) => get(pageProps, prop) === undefined)
@@ -151,5 +165,3 @@ class EventHandler {
       })
   }
 }
-
-export const eventHandler = new EventHandler()
