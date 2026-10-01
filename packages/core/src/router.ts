@@ -859,9 +859,10 @@ export class Router {
 
     const defaultVisitOptionsCallback = config.get('visitOptions')
 
-    const configuredOptions = defaultVisitOptionsCallback
-      ? defaultVisitOptionsCallback(href.toString(), cloneDeep(options)) || {}
-      : {}
+    const configuredOptions =
+      defaultVisitOptionsCallback && this.context.navigation.active
+        ? defaultVisitOptionsCallback(href.toString(), cloneDeep(options)) || {}
+        : {}
 
     const mergedOptions: Visit = {
       method: 'get',

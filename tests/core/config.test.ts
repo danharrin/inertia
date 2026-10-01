@@ -1,5 +1,6 @@
 import test, { expect } from '@playwright/test'
-import { Config } from '../../packages/core/src/config'
+import { Config, config } from '../../packages/core/src/config'
+import { RouterContext } from '../../packages/core/src/routerContext'
 
 type TestConfig = {
   form: {
@@ -35,6 +36,28 @@ function createConfig(): Config<TestConfig> {
 }
 
 test.describe('config.ts', () => {
+  test('does not run visit options for cache cleanup belonging to a disposed mount', () => {
+    const previousOptions = config.get('visitOptions')
+    const calls: string[] = []
+    const outgoing = new RouterContext()
+    const current = new RouterContext()
+
+    config.set('visitOptions', (url) => {
+      calls.push(url)
+    })
+
+    try {
+      outgoing.router.flush('https://example.com/outgoing')
+      outgoing.dispose()
+      outgoing.router.flush('https://example.com/outgoing')
+      current.router.flush('https://example.com/current')
+
+      expect(calls).toEqual(['https://example.com/outgoing', 'https://example.com/current'])
+    } finally {
+      config.set('visitOptions', previousOptions)
+    }
+  })
+
   test.describe('Config class', () => {
     test('returns defaults and custom values, falling back as needed', () => {
       const config = createConfig()
