@@ -3,7 +3,8 @@ import { RouterContext } from './routerContext'
 import { getCurrentContext, publishContext } from './routerGraph'
 import type { RouterInitParams } from './types'
 
-const target = getCurrentContext().router
+// The facade must not retain the first mount's state after that mount is disposed.
+const target = Object.create(Router.prototype) as Router
 const forwarders = new Map<PropertyKey, (...args: unknown[]) => unknown>()
 let attempt = 0
 let initialized = false
