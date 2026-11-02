@@ -354,6 +354,20 @@ test('keeps saved router methods and extensions usable after replacing a mount',
   await page.evaluate(() => {
     const router = Object.assign(window.testing.Inertia, { reportName: () => 'Revenue' })
     const { reload, optimistic } = router
+    const originalVisit = router.visit
+    const originalInit = router.init
+
+    router.visit = function (...args) {
+      document.body.dataset.wrappedVisit = new URL(args[0].toString(), location.origin).pathname
+
+      return originalVisit.apply(this, args)
+    }
+
+    router.init = function (params) {
+      document.body.dataset.wrappedInits = String(Number(document.body.dataset.wrappedInits || 0) + 1)
+
+      return originalInit(params)
+    }
 
     document.addEventListener('refresh-current-report', () => {
       document.body.dataset.sameRouter = String(optimistic(() => ({})) === router)
@@ -373,6 +387,11 @@ test('keeps saved router methods and extensions usable after replacing a mount',
   await expect(page.locator('body')).toHaveAttribute('data-same-method', 'true')
   await expect(page.locator('body')).toHaveAttribute('data-report-name', 'Revenue')
   await expect(page.locator('body')).toHaveAttribute('data-active-polls', '0')
+  await expect(page.locator('body')).toHaveAttribute('data-wrapped-visit', '/external-navigation/2')
+  await expect(page.locator('body')).toHaveAttribute('data-wrapped-inits', '1')
+
+  await page.getByRole('button', { name: 'Close report' }).click()
+  await expect(page.locator('#app')).toBeEmpty()
 })
 
 test('finishes cancelling other requests when a cancellation callback throws', async ({ page }) => {

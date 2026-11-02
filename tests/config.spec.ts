@@ -29,6 +29,67 @@ test.describe('updating config via config instance', () => {
     })
   })
 
+  test('preserves router wrappers when helper methods delegate to visit', async ({ page }) => {
+    await page.evaluate(() => {
+      const router = window.testing.Inertia
+      const originalVisit = router.visit.bind(router)
+
+      router.visit = (url, options) =>
+        originalVisit(url, {
+          ...options,
+          headers: { ...options?.headers, 'X-Inner-Wrapper': 'present' },
+        })
+
+      const wrappedVisit = router.visit
+
+      router.visit = (url, options) =>
+        wrappedVisit(url, {
+          ...options,
+          headers: { ...options?.headers, 'X-Outer-Wrapper': 'present' },
+        })
+
+      document.addEventListener('restore-router-visit', () => {
+        router.visit = originalVisit
+      })
+    })
+
+    for (const method of ['visit', 'get', 'post', 'reload'] as const) {
+      await page.evaluate(
+        (method) =>
+          new Promise<void>((resolve) => {
+            const router = window.testing.Inertia
+            const options = { onFinish: () => resolve() }
+
+            if (method === 'reload') {
+              router.reload({ ...options, method: 'post' })
+            } else if (method === 'visit') {
+              router.visit('/dump/get', options)
+            } else {
+              router[method](`/dump/${method}`, {}, options)
+            }
+          }),
+        method,
+      )
+
+      const dump = await shouldBeDumpPage(page, method === 'post' || method === 'reload' ? 'post' : 'get')
+
+      expect(dump.headers).toMatchObject({ 'x-inner-wrapper': 'present', 'x-outer-wrapper': 'present' })
+    }
+
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          document.dispatchEvent(new Event('restore-router-visit'))
+          window.testing.Inertia.get('/dump/get', {}, { onFinish: () => resolve() })
+        }),
+    )
+
+    const dump = await shouldBeDumpPage(page, 'get')
+
+    expect(dump.headers).not.toHaveProperty('x-inner-wrapper')
+    expect(dump.headers).not.toHaveProperty('x-outer-wrapper')
+  })
+
   test('prefetch duration', async ({ page }) => {
     const link = await page.getByRole('link', { name: 'Prefetch Link' })
     const prefetchPromise = page.waitForResponse(

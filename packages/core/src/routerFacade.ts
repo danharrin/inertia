@@ -5,9 +5,11 @@ import type { RouterInitParams } from './types'
 
 // The facade must not retain the first mount's state after that mount is disposed.
 const target = Object.create(Router.prototype) as Router
-const forwarders = new Map<PropertyKey, (...args: unknown[]) => unknown>()
+const forwarders = new WeakMap<Function, (...args: unknown[]) => unknown>()
 let attempt = 0
 let initialized = false
+
+Object.setPrototypeOf(getCurrentContext().router, target)
 
 const init = <ComponentType>(params: RouterInitParams<ComponentType>): VoidFunction => {
   const currentAttempt = ++attempt
@@ -28,13 +30,18 @@ const init = <ComponentType>(params: RouterInitParams<ComponentType>): VoidFunct
   }
 
   initialized = true
+  Object.setPrototypeOf(nextOwner.router, target)
   publishContext(nextOwner)
 
-  return nextOwner.router.init(params)
+  return (Router.prototype.init<ComponentType>).call(nextOwner.router, params)
 }
 
 export const router = new Proxy(target, {
   get(target, property, receiver) {
+    if (Object.hasOwn(target, property)) {
+      return Reflect.get(target, property, receiver)
+    }
+
     if (property === 'init') {
       return init
     }
@@ -49,19 +56,16 @@ export const router = new Proxy(target, {
       return value
     }
 
-    if (!forwarders.has(property)) {
-      forwarders.set(property, (...args: unknown[]) => {
-        const internalRouter = getCurrentContext().router
-        const result = Reflect.apply(
-          internalRouter[property as keyof Router] as (...args: unknown[]) => unknown,
-          internalRouter,
-          args,
-        )
+    if (!forwarders.has(value)) {
+      forwarders.set(value, function (this: Router | void, ...args: unknown[]) {
+        const isPublicCall = !(this instanceof Router) || this === router
+        const internalRouter = isPublicCall ? getCurrentContext().router : this
+        const result = Reflect.apply(value, internalRouter, args)
 
-        return result === internalRouter ? router : result
+        return isPublicCall && result === internalRouter ? router : result
       })
     }
 
-    return forwarders.get(property)
+    return forwarders.get(value)
   },
 })

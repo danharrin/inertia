@@ -1,6 +1,7 @@
 import test, { expect } from '@playwright/test'
 import { Config, config } from '../../packages/core/src/config'
 import { RouterContext } from '../../packages/core/src/routerContext'
+import { router } from '../../packages/core/src/routerFacade'
 
 type TestConfig = {
   form: {
@@ -41,16 +42,17 @@ test.describe('config.ts', () => {
     const calls: string[] = []
     const outgoing = new RouterContext()
     const current = new RouterContext()
+    const flush = router.flush
 
     config.set('visitOptions', (url) => {
       calls.push(url)
     })
 
     try {
-      outgoing.router.flush('https://example.com/outgoing')
+      flush.call(outgoing.router, 'https://example.com/outgoing')
       outgoing.dispose()
-      outgoing.router.flush('https://example.com/outgoing')
-      current.router.flush('https://example.com/current')
+      flush.call(outgoing.router, 'https://example.com/outgoing')
+      flush.call(current.router, 'https://example.com/current')
 
       expect(calls).toEqual(['https://example.com/outgoing', 'https://example.com/current'])
     } finally {
