@@ -69,7 +69,7 @@ type InertiaAppOptionsAuto<SharedProps extends PageProps> = Omit<
   page?: Page<SharedProps>
   render?: undefined
 } & (
-    | { setup?: undefined; withApp?: VueWithApp<SharedProps> }
+    | { setup?: undefined; externalNavigation?: never; withApp?: VueWithApp<SharedProps> }
     | { setup: (options: SetupOptions<HTMLElement | null, SharedProps>) => VueApp | void; withApp?: never }
   )
 
@@ -79,15 +79,6 @@ type RenderFunction<SharedProps extends PageProps> = (
   page: Page<SharedProps>,
   renderToString: RenderToString,
 ) => Promise<InertiaAppSSRResponse>
-
-type ExternalInertiaApp = { dispose: VoidFunction }
-
-export default async function createInertiaApp<SharedProps extends PageProps = PageProps & SharedPageProps>(
-  options: InertiaAppOptionsAuto<SharedProps> & {
-    externalNavigation: NonNullable<InertiaAppOptionsAuto<SharedProps>['externalNavigation']>
-    setup?: undefined
-  },
-): Promise<ExternalInertiaApp | RenderFunction<SharedProps>>
 
 export default async function createInertiaApp<SharedProps extends PageProps = PageProps & SharedPageProps>(
   options: InertiaAppOptionsForCSR<SharedProps>,
@@ -119,7 +110,11 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
     | InertiaAppOptionsForCSR<SharedProps>
     | InertiaAppOptionsForSSR<SharedProps>
     | InertiaAppOptionsAuto<SharedProps> = {} as InertiaAppOptionsAuto<SharedProps>,
-): Promise<InertiaAppSSRResponse | RenderFunction<SharedProps> | ExternalInertiaApp | void> {
+): Promise<InertiaAppSSRResponse | RenderFunction<SharedProps> | void> {
+  if (externalNavigation && !setup) {
+    throw new Error('External navigation requires a custom setup callback.')
+  }
+
   config.replace(defaults)
 
   if (nonce) {
@@ -187,7 +182,6 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
   const initialPage = page || getInitialPageFromDOM<Page<SharedProps>>(id)!
 
   let head: string[] = []
-  let dispose: VoidFunction | undefined
 
   const vueApp = await Promise.all([
     resolveComponent(initialPage.component, initialPage),
@@ -238,7 +232,6 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
       }
 
       app.mount(target)
-      dispose = () => app.unmount()
     } else {
       const app = createApp({ render: () => h(App, props) })
       app.use(plugin)
@@ -248,7 +241,6 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
       }
 
       app.mount(target)
-      dispose = () => app.unmount()
     }
   })
 
@@ -261,9 +253,5 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
     const body = buildSSRBody(id, initialPage, html)
 
     return { head, body }
-  }
-
-  if (externalNavigation && !setup && dispose) {
-    return { dispose }
   }
 }

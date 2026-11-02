@@ -28,3 +28,8 @@ createInertiaApp({
     mount(App, { target: el!, props })
   },
 })
+
+export const requireExternalSetup = () => {
+  // @ts-expect-error External navigation requires a custom `setup()` callback.
+  return createInertiaApp({ externalNavigation: { navigate: () => {} } })
+}

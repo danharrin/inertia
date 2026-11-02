@@ -319,33 +319,31 @@ test('retires a queued server head update when its mount closes', async ({ page 
   await expect(page.locator('title[data-inertia="external-report"]')).toHaveCount(0)
 })
 
-for (const setup of ['automatic', 'custom']) {
-  test(`stops polling on ${setup} unmount and loads a replacement page`, async ({ page }) => {
-    await page.goto(`/external-navigation/1${setup === 'custom' ? '?custom' : ''}`)
+test('stops polling on unmount and loads a replacement page', async ({ page }) => {
+  await page.goto('/external-navigation/1')
 
-    await page.getByRole('button', { name: 'Start polling' }).click()
-    await page.waitForRequest((request) => request.headers()['x-inertia-partial-data'] === 'total')
+  await page.getByRole('button', { name: 'Start polling' }).click()
+  await page.waitForRequest((request) => request.headers()['x-inertia-partial-data'] === 'total')
 
-    await page.getByRole('button', { name: 'Close report' }).click()
+  await page.getByRole('button', { name: 'Close report' }).click()
 
-    await expect(page.locator('#app')).toBeEmpty()
+  await expect(page.locator('#app')).toBeEmpty()
 
-    const requests: string[] = []
+  const requests: string[] = []
 
-    page.on('request', (request) => requests.push(request.url()))
-    await page.waitForTimeout(300)
+  page.on('request', (request) => requests.push(request.url()))
+  await page.waitForTimeout(300)
 
-    expect(requests.filter((url) => url.includes('/external-navigation/1'))).toEqual([])
+  expect(requests.filter((url) => url.includes('/external-navigation/1'))).toEqual([])
 
-    await page.getByRole('button', { name: 'Open second report' }).click()
+  await page.getByRole('button', { name: 'Open second report' }).click()
 
-    await expect(page.getByText('Details for report 2', { exact: true })).toBeVisible()
+  await expect(page.getByText('Details for report 2', { exact: true })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Refresh total' }).click()
+  await page.getByRole('button', { name: 'Refresh total' }).click()
 
-    await expect(page.getByText('Total: 201', { exact: true })).toBeVisible()
-  })
-}
+  await expect(page.getByText('Total: 201', { exact: true })).toBeVisible()
+})
 
 test('keeps saved router methods and extensions usable after replacing a mount', async ({ page }) => {
   await page.goto('/external-navigation/1')
@@ -742,7 +740,7 @@ test.describe('React rendering', () => {
       }
     })
 
-    await page.goto('/external-navigation/1?custom&disposeDuringResolution')
+    await page.goto('/external-navigation/1?disposeDuringResolution')
 
     await expect(page.locator('body')).toHaveAttribute('data-disposed-during-resolution', 'true')
 
@@ -761,7 +759,7 @@ test.describe('React rendering', () => {
       await route.fulfill({ json: { ready: true } })
     })
 
-    await page.goto('/external-navigation/suspended?custom')
+    await page.goto('/external-navigation/suspended')
 
     await expect(page.getByText('Opening report details', { exact: true })).toBeVisible()
 
@@ -811,7 +809,7 @@ test.describe('React rendering', () => {
   })
 
   test('can replace a mount whose component failed to render', async ({ page }) => {
-    await page.goto('/external-navigation/failed?custom')
+    await page.goto('/external-navigation/failed')
 
     await expect(page.getByText('Unable to open report', { exact: true })).toBeVisible()
 

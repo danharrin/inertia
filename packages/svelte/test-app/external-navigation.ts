@@ -22,27 +22,17 @@ const host: ReturnType<typeof createHost<Page>> = createHost<Page>(async (page) 
     },
   }
 
-  if (new URLSearchParams(location.search).has('custom')) {
-    let dispose = async () => {}
+  let dispose = async () => {}
 
-    await createInertiaApp({
-      ...options,
-      setup({ el, App, props }) {
-        const app = mount(App, { target: el!, props })
-        dispose = () => unmount(app)
-      },
-    })
+  await createInertiaApp({
+    ...options,
+    setup({ el, App, props }) {
+      const app = mount(App, { target: el!, props })
+      dispose = () => unmount(app)
+    },
+  })
 
-    return { dispose }
-  }
-
-  const app = await createInertiaApp(options)
-
-  if (typeof app === 'function') {
-    throw new Error('Expected a browser mount')
-  }
-
-  return app
+  return { dispose }
 })
 
 void host.start(window.initialPage!)

@@ -250,10 +250,8 @@ export class CurrentPage {
     // A restored history entry supersedes any page update still resolving its component
     this.componentId = {}
 
-    const componentId = this.componentId
-
     return this.resolve(page.component, page).then((component) => {
-      if (componentId !== this.componentId) {
+      if (!this.context.navigation.active) {
         return
       }
 
@@ -294,8 +292,6 @@ export class CurrentPage {
   }
 
   public setPropsQuietly(props: Page['props']): Promise<unknown> {
-    const componentId = this.componentId
-
     if (!this.context.navigation.active) {
       return Promise.resolve()
     }
@@ -303,7 +299,7 @@ export class CurrentPage {
     this.page = { ...this.page, props }
 
     return this.resolve(this.page.component, this.page).then((component) => {
-      if (componentId !== this.componentId) {
+      if (!this.context.navigation.active) {
         return
       }
 

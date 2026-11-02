@@ -48,42 +48,32 @@ const host: ReturnType<typeof createHost<Page>> = createHost<Page>(async (page) 
     </StrictMode>
   )
 
-  if (new URLSearchParams(location.search).has('custom')) {
-    let unmount = () => {}
+  let unmount = () => {}
 
-    await createInertiaApp({
-      ...options,
-      setup({ el, App, props, dispose }) {
-        if (new URLSearchParams(location.search).has('disposeDuringResolution')) {
-          disposeDuringResolution = () => {
-            dispose?.()
-            document.body.dataset.disposedDuringResolution = 'true'
-          }
+  await createInertiaApp({
+    ...options,
+    setup({ el, App, props, dispose }) {
+      if (new URLSearchParams(location.search).has('disposeDuringResolution')) {
+        disposeDuringResolution = () => {
+          dispose?.()
+          document.body.dataset.disposedDuringResolution = 'true'
         }
+      }
 
-        const root = createRoot(el)
-        unmount = () => {
-          try {
-            root.unmount()
-          } finally {
-            dispose?.()
-          }
+      const root = createRoot(el)
+      unmount = () => {
+        try {
+          root.unmount()
+        } finally {
+          dispose?.()
         }
+      }
 
-        root.render(withApp(<App {...props} />))
-      },
-    })
+      root.render(withApp(<App {...props} />))
+    },
+  })
 
-    return { dispose: unmount }
-  }
-
-  const app = await createInertiaApp({ ...options, withApp })
-
-  if (typeof app === 'function') {
-    throw new Error('Expected a browser mount')
-  }
-
-  return app
+  return { dispose: unmount }
 })
 
 void host.start(window.initialPage!)

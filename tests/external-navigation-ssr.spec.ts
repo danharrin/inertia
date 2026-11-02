@@ -6,8 +6,8 @@ import { expect, test } from '@playwright/test'
 test.describe('React external SSR', () => {
   test.skip(process.env.PACKAGE !== 'react', 'React server rendering')
 
-  for (const setup of ['automatic', 'custom']) {
-    test(`renders an external app with ${setup} setup without starting browser navigation`, async () => {
+  for (const entry of ['factory', 'explicit']) {
+    test(`renders an external app with the ${entry} entry without starting browser navigation`, async () => {
       // A fresh process prevents an earlier render from masking router initialization errors.
       const { stdout } = await promisify(execFile)(
         process.execPath,
@@ -18,6 +18,7 @@ test.describe('React external SSR', () => {
         import { createInertiaApp } from './dist/index.js'
         import { createElement } from 'react'
         import { renderToString } from 'react-dom/server'
+        import { rejects } from 'node:assert/strict'
 
         const page = {
           component: 'Report',
@@ -31,9 +32,11 @@ test.describe('React external SSR', () => {
           resolve: () => ({ name }) => createElement('h1', null, name),
           externalNavigation: { navigate() { throw new Error('Unexpected navigation') } },
         }
+        await rejects(createInertiaApp(options), /External navigation requires a custom setup callback/)
+        options.setup = ({ App, props }) => createElement(App, props)
         const result = ${
-          setup === 'custom'
-            ? `await createInertiaApp({ ...options, page, render: renderToString, setup: ({ App, props }) => createElement(App, props) })`
+          entry === 'explicit'
+            ? `await createInertiaApp({ ...options, page, render: renderToString })`
             : `await (await createInertiaApp(options))(page, renderToString)`
         }
 

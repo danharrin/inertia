@@ -14,7 +14,7 @@ import {
   type PageProps,
   type SharedPageProps,
 } from '@inertiajs/core'
-import { hydrate, mount, unmount } from 'svelte'
+import { hydrate, mount } from 'svelte'
 import App, { type InertiaAppProps } from './components/App.svelte'
 import { config } from './index'
 import type { ComponentResolver, ResolvedComponent, SvelteInertiaAppConfig } from './types'
@@ -53,7 +53,7 @@ type InertiaAppOptionsAuto<SharedProps extends PageProps> = Omit<
 > & {
   page?: Page<SharedProps>
 } & (
-    | { setup?: undefined; withApp?: SvelteWithApp<SharedProps> }
+    | { setup?: undefined; externalNavigation?: never; withApp?: SvelteWithApp<SharedProps> }
     | { setup: (options: SetupOptions<SharedProps>) => SvelteRenderResult | void; withApp?: never }
   )
 
@@ -66,15 +66,6 @@ type RenderFunction<SharedProps extends PageProps> = (
   page: Page<SharedProps>,
   render: SvelteServerRender,
 ) => Promise<InertiaAppSSRResponse>
-
-type ExternalInertiaApp = { dispose: () => Promise<void> }
-
-export default async function createInertiaApp<SharedProps extends PageProps = PageProps & SharedPageProps>(
-  options: InertiaAppOptionsAuto<SharedProps> & {
-    externalNavigation: NonNullable<InertiaAppOptionsAuto<SharedProps>['externalNavigation']>
-    setup?: undefined
-  },
-): Promise<ExternalInertiaApp | RenderFunction<SharedProps>>
 
 export default async function createInertiaApp<SharedProps extends PageProps = PageProps & SharedPageProps>(
   options: InertiaAppOptionsForCSR<SharedProps>,
@@ -100,7 +91,11 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
   }:
     | InertiaAppOptionsForCSR<SharedProps>
     | InertiaAppOptionsAuto<SharedProps> = {} as InertiaAppOptionsAuto<SharedProps>,
-): Promise<InertiaAppSSRResponse | RenderFunction<SharedProps> | ExternalInertiaApp | void> {
+): Promise<InertiaAppSSRResponse | RenderFunction<SharedProps> | void> {
+  if (externalNavigation && !setup) {
+    throw new Error('External navigation requires a custom setup callback.')
+  }
+
   config.replace(defaults)
 
   if (nonce) {
@@ -212,7 +207,6 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
   // CSR
   const target = el!
   const isServerRendered = props.serverRendered!
-  let dispose: (() => Promise<void>) | undefined
 
   if (setup) {
     await setup({ el: target, App, props })
@@ -224,11 +218,9 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
     }
 
     if (isServerRendered) {
-      const app = hydrate(App, { target, props, context })
-      dispose = () => unmount(app)
+      hydrate(App, { target, props, context })
     } else {
-      const app = mount(App, { target, props, context })
-      dispose = () => unmount(app)
+      mount(App, { target, props, context })
     }
   }
 
@@ -243,9 +235,5 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
 
   if (progress && !externalNavigation) {
     setupProgress(progress)
-  }
-
-  if (externalNavigation && !setup && dispose) {
-    return { dispose }
   }
 }

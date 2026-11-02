@@ -43,3 +43,8 @@ export const renderPage = (page: Page): Promise<InertiaAppSSRResponse> =>
     resolve: () => defineComponent({ render: () => null }),
     setup: ({ App, props, plugin }) => createSSRApp({ render: () => h(App, props) }).use(plugin),
   })
+
+export const requireExternalSetup = () => {
+  // @ts-expect-error External navigation requires a custom `setup()` callback.
+  return createInertiaApp({ externalNavigation: { navigate: () => {} } })
+}

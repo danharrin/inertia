@@ -157,12 +157,7 @@ export class Router {
     data: T = {} as T,
     options: VisitHelperOptions<T> = {},
   ): void {
-    return this.visit(url, {
-      preserveState: true,
-      ...options,
-      method: 'post',
-      data,
-    })
+    return this.visit(url, { preserveState: true, ...options, method: 'post', data })
   }
 
   public put<T extends RequestPayload = RequestPayload>(
@@ -170,12 +165,7 @@ export class Router {
     data: T = {} as T,
     options: VisitHelperOptions<T> = {},
   ): void {
-    return this.visit(url, {
-      preserveState: true,
-      ...options,
-      method: 'put',
-      data,
-    })
+    return this.visit(url, { preserveState: true, ...options, method: 'put', data })
   }
 
   public patch<T extends RequestPayload = RequestPayload>(
@@ -183,23 +173,14 @@ export class Router {
     data: T = {} as T,
     options: VisitHelperOptions<T> = {},
   ): void {
-    return this.visit(url, {
-      preserveState: true,
-      ...options,
-      method: 'patch',
-      data,
-    })
+    return this.visit(url, { preserveState: true, ...options, method: 'patch', data })
   }
 
   public delete<T extends RequestPayload = RequestPayload>(
     url: URL | string | UrlMethodPair,
     options: Omit<VisitOptions<T>, 'method'> = {},
   ): void {
-    return this.visit(url, {
-      preserveState: true,
-      ...options,
-      method: 'delete',
-    })
+    return this.visit(url, { preserveState: true, ...options, method: 'delete' })
   }
 
   public query<T extends RequestPayload = RequestPayload>(
@@ -288,16 +269,13 @@ export class Router {
   }
 
   public cancelAll({ async = true, prefetch = true, sync = true } = {}): void {
-    const syncRequestStream = this.syncRequestStream
-    const asyncRequestStream = this.asyncRequestStream
-
     if (async) {
-      asyncRequestStream.cancelInFlight({ prefetch })
+      this.asyncRequestStream.cancelInFlight({ prefetch })
       this.context.prefetchedRequests.interruptInFlight({ async: true })
     }
 
     if (sync) {
-      syncRequestStream.cancelInFlight()
+      this.syncRequestStream.cancelInFlight()
       this.context.prefetchedRequests.interruptInFlight({ async: false })
     }
   }
@@ -1033,13 +1011,9 @@ export class Router {
 
   protected loadDeferredProps(deferred: Page['deferredProps']): void {
     if (deferred) {
-      for (const props of Object.values(deferred)) {
-        this.doReload({
-          only: props,
-          deferredProps: true,
-          preserveErrors: true,
-        })
-      }
+      Object.values(deferred).forEach((props) => {
+        this.doReload({ only: props, deferredProps: true, preserveErrors: true })
+      })
     }
   }
 }

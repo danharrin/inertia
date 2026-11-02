@@ -75,7 +75,7 @@ type InertiaAppOptionsAuto<SharedProps extends PageProps> = Omit<
   render?: undefined
   strictMode?: boolean
 } & (
-    | { setup?: undefined; withApp?: ReactWithApp<SharedProps> }
+    | { setup?: undefined; externalNavigation?: never; withApp?: ReactWithApp<SharedProps> }
     | { setup: (options: SetupOptions<HTMLElement | null, SharedProps>) => ReactElement | void; withApp?: never }
   )
 
@@ -86,14 +86,6 @@ type RenderFunction<SharedProps extends PageProps> = (
   renderToString: RenderToString,
 ) => Promise<InertiaAppSSRResponse>
 
-type ExternalInertiaApp = { dispose: VoidFunction }
-
-export default async function createInertiaApp<SharedProps extends PageProps = PageProps & SharedPageProps>(
-  options: InertiaAppOptionsAuto<SharedProps> & {
-    externalNavigation: NonNullable<InertiaAppOptionsAuto<SharedProps>['externalNavigation']>
-    setup?: undefined
-  },
-): Promise<ExternalInertiaApp | RenderFunction<SharedProps>>
 export default async function createInertiaApp<SharedProps extends PageProps = PageProps & SharedPageProps>(
   options: InertiaAppOptionsForCSR<SharedProps>,
 ): Promise<void>
@@ -125,7 +117,11 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
     | InertiaAppOptionsForCSR<SharedProps>
     | InertiaAppOptionsForSSR<SharedProps>
     | InertiaAppOptionsAuto<SharedProps> = {} as InertiaAppOptionsAuto<SharedProps>,
-): Promise<InertiaAppSSRResponse | RenderFunction<SharedProps> | ExternalInertiaApp | void> {
+): Promise<InertiaAppSSRResponse | RenderFunction<SharedProps> | void> {
+  if (externalNavigation && !setup) {
+    throw new Error('External navigation requires a custom setup callback.')
+  }
+
   config.replace(defaults)
 
   if (nonce) {
@@ -198,15 +194,6 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
   let head: string[] = []
 
   const externalRouterScope = !isServer && externalNavigation ? createExternalRouterScope() : undefined
-  let unmount: VoidFunction | undefined
-
-  const dispose = () => {
-    try {
-      unmount?.()
-    } finally {
-      externalRouterScope?.dispose()
-    }
-  }
 
   const reactApp = await Promise.all([
     resolveComponent(initialPage.component, initialPage),
@@ -251,16 +238,13 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
       }
 
       if (el.hasAttribute('data-server-rendered')) {
-        const root = hydrateRoot(el, appElement)
-        unmount = () => root.unmount()
+        hydrateRoot(el, appElement)
       } else {
-        const root = createRoot(el)
-        unmount = () => root.unmount()
-        root.render(appElement)
+        createRoot(el).render(appElement)
       }
     })
     .catch((exception) => {
-      dispose()
+      externalRouterScope?.dispose()
 
       throw exception
     })
@@ -274,9 +258,5 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
     const body = buildSSRBody(id, initialPage, html)
 
     return { head, body }
-  }
-
-  if (externalRouterScope && !setup) {
-    return { dispose }
   }
 }

@@ -2,17 +2,16 @@ import { EventHandler } from './eventHandler'
 import { createEvents } from './events'
 import { History } from './history'
 import { InitialVisit } from './initialVisit'
-import { Navigation } from './navigation'
 import { CurrentPage } from './page'
 import { Polls } from './polls'
 import { PrefetchedRequests } from './prefetched'
 import Queue from './queue'
 import { Router } from './router'
 import { Scroll } from './scroll'
-import type { VisitCallbacks } from './types'
+import type { ExternalNavigationOptions, VisitCallbacks } from './types'
 
 export class RouterContext {
-  public readonly navigation = new Navigation()
+  public readonly navigation: { external?: ExternalNavigationOptions; active: boolean } = { active: true }
   public dispose: VoidFunction = () => {
     this.navigation.active = false
   }
