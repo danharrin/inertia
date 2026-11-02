@@ -1,6 +1,7 @@
 import { Poll, PollCallback } from './poll'
 import type { RouterContext } from './routerContext'
 import { PollOptions } from './types'
+import { visibility } from './visibility'
 
 export class Polls {
   protected polls: Poll[] = []
@@ -25,6 +26,10 @@ export class Polls {
       autoStart: (options.autoStart ?? true) && this.context.navigation.active,
     })
 
+    // A tab that was already hidden never fires `visibilitychange`, so the
+    // listener below would leave this poll running at full cadence
+    poll.isInBackground(visibility.isHidden())
+
     this.polls.push(poll)
 
     return {
@@ -44,16 +49,8 @@ export class Polls {
   }
 
   public init(): VoidFunction {
-    if (typeof document === 'undefined') {
-      return () => {}
-    }
-
-    const listener = () => {
-      this.polls.forEach((poll) => poll.isInBackground(document.hidden))
-    }
-
-    document.addEventListener('visibilitychange', listener, false)
-
-    return () => document.removeEventListener('visibilitychange', listener, false)
+    return visibility.onChange((hidden) => {
+      this.polls.forEach((poll) => poll.isInBackground(hidden))
+    })
   }
 }

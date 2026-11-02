@@ -54,6 +54,10 @@ export class Request {
   }
 
   public async send() {
+    // Track the refresh first: a caller may cancel from `onCancelToken`, which
+    // runs synchronously, and the untracking that follows would find nothing.
+    this.context.propRefreshes.track(this.requestParams.all())
+
     this.requestParams.onCancelToken(() => {
       // Once the response has arrived it's too late to cancel, the page is already being updated
       if (this.response) {
@@ -63,39 +67,46 @@ export class Request {
       this.cancel({ cancelled: true })
     })
 
-    this.context.events.fireStartEvent(this.requestParams.all())
+    let originallyPrefetch = false
+    let processedConfig: HttpRequestConfig
 
-    this.requestParams.onStart()
+    try {
+      this.context.events.fireStartEvent(this.requestParams.all())
+      this.requestParams.onStart()
 
-    if (this.requestParams.all().prefetch) {
-      this.requestParams.onPrefetching()
-      this.context.events.firePrefetchingEvent(this.requestParams.all())
-    }
-
-    // We capture this up here because the response
-    // will clear the prefetch flag so it can use it
-    // as a regular response once the prefetch is done
-    const originallyPrefetch = this.requestParams.all().prefetch
-
-    const config: HttpRequestConfig = {
-      method: this.requestParams.all().method,
-      url: urlWithoutHash(this.requestParams.all().url).href,
-      data: this.requestParams.data(),
-      signal: this.cancelToken.signal,
-      headers: this.getHeaders(),
-      onUploadProgress: this.onProgress.bind(this),
-    }
-
-    // The HTTP clients would throw on a BigInt, so those bodies are encoded here
-    if (containsBigInt(config.data)) {
-      config.data = stringifyJson(config.data)
-      config.headers = {
-        'Content-Type': 'application/json',
-        ...config.headers,
+      if (this.requestParams.all().prefetch) {
+        this.requestParams.onPrefetching()
+        this.context.events.firePrefetchingEvent(this.requestParams.all())
       }
-    }
 
-    const processedConfig = await interceptors.processRequest(this.context, this.requestParams.all(), config)
+      // We capture this up here because the response
+      // will clear the prefetch flag so it can use it
+      // as a regular response once the prefetch is done
+      originallyPrefetch = this.requestParams.all().prefetch
+
+      const config: HttpRequestConfig = {
+        method: this.requestParams.all().method,
+        url: urlWithoutHash(this.requestParams.all().url).href,
+        data: this.requestParams.data(),
+        signal: this.cancelToken.signal,
+        headers: this.getHeaders(),
+        onUploadProgress: this.onProgress.bind(this),
+      }
+
+      // The HTTP clients would throw on a BigInt, so those bodies are encoded here
+      if (containsBigInt(config.data)) {
+        config.data = stringifyJson(config.data)
+        config.headers = { 'Content-Type': 'application/json', ...config.headers }
+      }
+
+      processedConfig = await interceptors.processRequest(this.context, this.requestParams.all(), config)
+    } catch (error) {
+      // The request never got off the ground, so the `finally` below that would
+      // normally untrack it never attaches
+      this.context.propRefreshes.untrack(this.requestParams.all())
+
+      throw error
+    }
 
     // Interceptors and visit callbacks may dispose the owner. Never start network
     // activity for an inactive mount.
@@ -180,6 +191,8 @@ export class Request {
     }
 
     this.requestHasFinished = true
+
+    this.context.propRefreshes.untrack(this.requestParams.all())
 
     this.context.events.fireFinishEvent(this.requestParams.all())
     this.requestParams.onFinish()

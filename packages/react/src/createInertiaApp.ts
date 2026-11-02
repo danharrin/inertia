@@ -1,6 +1,7 @@
 /// <reference path="./env.d.ts" />
 import {
   buildSSRBody,
+  configureLive,
   CreateInertiaAppOptions,
   CreateInertiaAppOptionsForCSR,
   CreateInertiaAppOptionsForSSR,
@@ -8,6 +9,7 @@ import {
   getInitialPageFromDOM,
   http as httpModule,
   InertiaAppSSRResponse,
+  LiveAppOption,
   Page,
   PageProps,
   router,
@@ -45,10 +47,11 @@ type InertiaAppOptionsForCSR<SharedProps extends PageProps> = CreateInertiaAppOp
   SetupOptions<HTMLElement, SharedProps>,
   void,
   ReactInertiaAppConfig
-> & {
-  strictMode?: undefined
-  withApp?: never
-}
+> &
+  LiveAppOption & {
+    strictMode?: undefined
+    withApp?: never
+  }
 
 type InertiaAppOptionsForSSR<SharedProps extends PageProps> = CreateInertiaAppOptionsForSSR<
   SharedProps,
@@ -60,6 +63,9 @@ type InertiaAppOptionsForSSR<SharedProps extends PageProps> = CreateInertiaAppOp
   render: typeof renderToString
   strictMode?: undefined
   withApp?: never
+  // Live props only run in the browser, so a server entry has nothing to
+  // configure. `never` rather than omission keeps the union destructurable.
+  live?: never
 }
 
 type InertiaAppOptionsAuto<SharedProps extends PageProps> = Omit<
@@ -70,11 +76,12 @@ type InertiaAppOptionsAuto<SharedProps extends PageProps> = Omit<
     ReactInertiaAppConfig
   >,
   'setup'
-> & {
-  page?: Page<SharedProps>
-  render?: undefined
-  strictMode?: boolean
-} & (
+> &
+  LiveAppOption & {
+    page?: Page<SharedProps>
+    render?: undefined
+    strictMode?: boolean
+  } & (
     | { setup?: undefined; externalNavigation?: never; withApp?: ReactWithApp<SharedProps> }
     | { setup: (options: SetupOptions<HTMLElement | null, SharedProps>) => ReactElement | void; withApp?: never }
   )
@@ -108,6 +115,7 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
     nonce,
     http,
     layout,
+    live,
     serverHead,
     externalNavigation,
     strictMode = false,
@@ -130,6 +138,10 @@ export default async function createInertiaApp<SharedProps extends PageProps = P
 
   if (http) {
     httpModule.setClient(http)
+  }
+
+  if (live) {
+    configureLive(live)
   }
 
   if (dev) {

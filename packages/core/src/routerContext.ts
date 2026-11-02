@@ -2,9 +2,11 @@ import { EventHandler } from './eventHandler'
 import { createEvents } from './events'
 import { History } from './history'
 import { InitialVisit } from './initialVisit'
+import { Live } from './live'
 import { CurrentPage } from './page'
 import { Polls } from './polls'
 import { PrefetchedRequests } from './prefetched'
+import { PropRefreshes } from './propRefreshes'
 import Queue from './queue'
 import { Router } from './router'
 import { Scroll } from './scroll'
@@ -23,6 +25,8 @@ export class RouterContext {
   public readonly polls = new Polls(this)
   public readonly scroll = new Scroll(this)
   public readonly initialVisit = new InitialVisit(this)
+  public readonly propRefreshes = new PropRefreshes(this)
+  public readonly live = new Live(this)
   public readonly responseQueue = new Queue<Promise<boolean | void>>()
   public readonly clientVisitQueue = new Queue<Promise<void>>()
   public readonly infiniteScrollQueue = new Queue<Promise<void>>()

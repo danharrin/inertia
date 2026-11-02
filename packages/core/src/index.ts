@@ -1,6 +1,8 @@
 import { Config } from './config'
 import { Router } from './router'
 import { router } from './routerFacade'
+import { getCurrentContext } from './routerGraph'
+import type { LiveOption } from './types'
 
 export { UseFormUtils } from './useFormUtils'
 
@@ -29,6 +31,7 @@ export { shouldIntercept, shouldNavigate } from './navigationEvents'
 export { isPathOrSubPath, partialReloadRequestsProp, partialReloadRequestsSomeProps } from './partialReload'
 export { progress, default as setupProgress } from './progress'
 export { FormComponentResetSymbol, resetFormFields } from './resetFormFields'
+export { socketId } from './socketId'
 export { buildSSRBody } from './ssrUtils'
 export * from './types'
 export {
@@ -45,3 +48,11 @@ export { XhrHttpClient, xhrHttpClient } from './xhrHttpClient'
 export { type Config, type Router }
 
 export { router }
+
+export const configureLive = (option: LiveOption): void => getCurrentContext().live.configure(option)
+
+/** The write side stays private so callers cannot register visits they never finish. */
+export const propRefreshes = {
+  isRefreshing: (prop: string): boolean => getCurrentContext().propRefreshes.isRefreshing(prop),
+  onChange: (listener: VoidFunction): VoidFunction => getCurrentContext().propRefreshes.onChange(listener),
+}

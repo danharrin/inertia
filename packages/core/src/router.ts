@@ -69,13 +69,6 @@ export class Router {
       window.history.scrollRestoration = 'manual'
     }
 
-    this.context.page.init({
-      initialPage,
-      resolveComponent,
-      swapComponent,
-      onFlash,
-    })
-
     const disposeEvents = this.context.eventHandler.init(!!externalNavigation)
     const disposePolls = this.context.polls.init()
 
@@ -120,14 +113,26 @@ export class Router {
       removeLoadDeferredPropsListener()
       removeLeavePageListener()
       removeHistoryQuotaExceededListener()
+      this.context.propRefreshes.dispose()
       try {
-        this.asyncRequestStream.cancelInFlight()
+        this.context.live.dispose()
       } finally {
-        this.syncRequestStream.cancelInFlight()
+        try {
+          this.asyncRequestStream.cancelInFlight()
+        } finally {
+          this.syncRequestStream.cancelInFlight()
+        }
       }
     })
 
     try {
+      this.context.page.init({
+        initialPage,
+        resolveComponent,
+        swapComponent,
+        onFlash,
+      })
+      this.context.live.init()
       this.context.initialVisit.handle()
     } catch (exception) {
       dispose()
@@ -695,13 +700,13 @@ export class Router {
       return Promise.resolve()
     }
 
-    const { viewTransition, onError, onFinish, onFlash, onSuccess, ...pageParams } = params
+    const { viewTransition, preserveFlash, onError, onFinish, onFlash, onSuccess, ...pageParams } = params
 
     const page = {
       ...current,
       clearHistory: false,
       ...pageParams,
-      flash: flash ?? {},
+      flash: preserveFlash ? current.flash : (flash ?? {}),
       props: props as Page['props'],
     }
 
@@ -734,6 +739,7 @@ export class Router {
         preserveScroll,
         preserveState,
         viewTransition,
+        clientSide: true,
         visitId,
       })
       .then(() => {
@@ -744,7 +750,9 @@ export class Router {
 
         const currentFlash = this.context.page.get().flash
 
-        if (Object.keys(currentFlash).length > 0) {
+        // Flash that was carried over was already announced when it arrived,
+        // so announcing it again would replay whatever the app did with it.
+        if (!preserveFlash && Object.keys(currentFlash).length > 0) {
           this.context.events.fireFlashEvent(currentFlash)
 
           this.context.callback(onFlash || noop)(currentFlash)
@@ -1015,5 +1023,9 @@ export class Router {
         this.doReload({ only: props, deferredProps: true, preserveErrors: true })
       })
     }
+
+    // Each reload that started now claims its own props, and one a `before`
+    // listener cancelled never will, so the page's claim ends here either way
+    this.context.propRefreshes.clearPendingDeferredProps()
   }
 }

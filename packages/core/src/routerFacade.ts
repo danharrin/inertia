@@ -29,6 +29,10 @@ const init = <ComponentType>(params: RouterInitParams<ComponentType>): VoidFunct
     nextOwner.history.inherit(getCurrentContext().history)
   }
 
+  if (initialized) {
+    nextOwner.live.inherit(getCurrentContext().live)
+  }
+
   initialized = true
   Object.setPrototypeOf(nextOwner.router, target)
   publishContext(nextOwner)

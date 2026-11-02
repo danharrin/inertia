@@ -75,6 +75,10 @@ export function createEvents(context: RouterContext) {
     return fireEvent('location', { cancelable: true, detail: { url, versionChange } })
   }
 
+  const fireLiveEvent: GlobalEventTrigger<'live'> = (details) => {
+    return fireEvent('live', { cancelable: true, detail: details })
+  }
+
   return {
     fireBeforeEvent,
     fireErrorEvent,
@@ -91,5 +95,6 @@ export function createEvents(context: RouterContext) {
     firePrefetchingEvent,
     fireFlashEvent,
     fireLocationEvent,
+    fireLiveEvent,
   }
 }
