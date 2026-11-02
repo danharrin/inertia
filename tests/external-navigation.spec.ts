@@ -482,7 +482,7 @@ test('leaves an outgoing deferred request without overwriting the replacement pa
     await route.fulfill({ response })
   })
 
-  await page.goto('/external-navigation/1')
+  await page.goto('/external-navigation/1', { waitUntil: 'domcontentloaded' })
 
   await expect(page.getByText('Loading details', { exact: true })).toBeVisible()
 
