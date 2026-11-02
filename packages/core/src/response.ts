@@ -383,6 +383,7 @@ export class Response {
         : this.pageUrl(pageResponse)
 
     this.requestParams.all().onBeforeUpdate(pageResponse)
+    this.context.events.fireBeforeUpdateEvent(pageResponse)
 
     const visit = this.requestParams.all()
 

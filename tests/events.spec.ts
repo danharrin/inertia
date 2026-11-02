@@ -728,6 +728,41 @@ test.describe('Events', () => {
     })
   })
 
+  test.describe('beforeUpdate', () => {
+    test('fires after the visit callback and before applying the response page', async ({ page }) => {
+      await listenForGlobalMessages(page, 'inertia:beforeUpdate')
+
+      const messages = await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const messages: { stage: string; url: string; currentUrl: string }[] = []
+            const router = window.testing.Inertia
+
+            router.on('beforeUpdate', (event) => {
+              messages.push({ stage: 'global', url: event.detail.page.url, currentUrl: location.pathname })
+            })
+
+            router.visit('/dump/get', {
+              onBeforeUpdate: (responsePage) => {
+                messages.push({ stage: 'visit', url: responsePage.url, currentUrl: location.pathname })
+              },
+              onFinish: () => resolve(messages),
+            })
+          }),
+      )
+
+      expect(messages).toEqual([
+        { stage: 'visit', url: '/dump/get', currentUrl: '/events' },
+        { stage: 'global', url: '/dump/get', currentUrl: '/events' },
+      ])
+
+      const globalMessages = await waitForGlobalMessages(page, 'inertia:beforeUpdate', 1)
+
+      await assertIsGlobalEvent(globalMessages[0], 'inertia:beforeUpdate', false)
+      await assertPageObject(globalMessages[0].detail.page)
+    })
+  })
+
   test.describe('navigate', () => {
     test('fires when the page navigates away after a successful request', async ({ page }) => {
       await listenForGlobalMessages(page, 'inertia:navigate')
