@@ -11,6 +11,9 @@ export class EventHandler {
     listener: (...args: any[]) => void
   }[] = []
 
+  protected onWindowScroll = debounce(() => this.context.scroll.onWindowScroll(), 100)
+  protected onScroll = debounce((event: Event) => this.context.scroll.onScroll(event), 100)
+
   public init(external = false): VoidFunction {
     if (external) {
       return () => {}
@@ -19,16 +22,6 @@ export class EventHandler {
     const controller = new AbortController()
     const popstate = this.handlePopstateEvent.bind(this)
     const pageshow = this.handlePageshowEvent.bind(this)
-    const windowScroll = debounce(() => {
-      if (!controller.signal.aborted) {
-        this.context.scroll.onWindowScroll()
-      }
-    }, 100)
-    const documentScroll = debounce((event: Event) => {
-      if (!controller.signal.aborted) {
-        this.context.scroll.onScroll(event)
-      }
-    }, 100)
 
     if (typeof window !== 'undefined') {
       window.addEventListener('popstate', popstate, {
@@ -37,20 +30,24 @@ export class EventHandler {
       window.addEventListener('pageshow', pageshow, {
         signal: controller.signal,
       })
-      window.addEventListener('scroll', windowScroll, {
+      window.addEventListener('scroll', this.onWindowScroll, {
         capture: true,
         signal: controller.signal,
       })
     }
 
     if (typeof document !== 'undefined') {
-      document.addEventListener('scroll', documentScroll, {
+      document.addEventListener('scroll', this.onScroll, {
         capture: true,
         signal: controller.signal,
       })
     }
 
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      this.onWindowScroll.cancel()
+      this.onScroll.cancel()
+    }
   }
 
   public onGlobalEvent<TEventName extends GlobalEventNames>(
@@ -110,6 +107,9 @@ export class EventHandler {
   }
 
   protected handlePopstateEvent(event: PopStateEvent): void {
+    this.onWindowScroll.cancel()
+    this.onScroll.cancel()
+
     const state = event.state || null
 
     if (state === null) {
@@ -129,6 +129,10 @@ export class EventHandler {
       return this.onMissingHistoryItem()
     }
 
+    // Cancel ongoing requests except prefetch requests before decrypting,
+    // so a response that arrives in the meantime can't replace the restored page
+    this.context.router.cancelAll({ prefetch: false })
+
     this.context.history
       .decrypt(state.page)
       .then((data) => {
@@ -137,12 +141,9 @@ export class EventHandler {
           return
         }
 
-        // Cancel ongoing requests except prefetch requests
-        this.context.router.cancelAll({ prefetch: false })
-
         this.context.page.setQuietly(data, { preserveState: false }).then(() => {
           this.context.scroll.restore(this.context.history.getScrollRegions())
-          this.context.events.fireNavigateEvent(this.context.page.get())
+          this.context.events.fireNavigateEvent(this.context.page.get(), { type: 'history' })
 
           const pendingDeferred: Record<string, string[]> = {}
           const pageProps = this.context.page.get().props

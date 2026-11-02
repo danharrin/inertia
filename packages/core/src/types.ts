@@ -140,21 +140,21 @@ export type FormDataKeys<T> = T extends Function | FormDataConvertibleValue
  */
 type ArrayFormDataKeys<T extends unknown[]> = number extends T['length']
   ? // Dynamic array
-      | `${number}`
-      | (0 extends 1 & T[number]
+    | `${number}`
+    | (0 extends 1 & T[number]
+        ? never
+        : T[number] extends FormDataConvertibleValue
           ? never
-          : T[number] extends FormDataConvertibleValue
-            ? never
-            : `${number}.${FormDataKeys<T[number]>}`)
+          : `${number}.${FormDataKeys<T[number]>}`)
   : // Tuple with known length
-      | Extract<keyof T, `${number}`>
-      | {
-          [Key in Extract<keyof T, `${number}`>]: 0 extends 1 & T[Key]
+    | Extract<keyof T, `${number}`>
+    | {
+        [Key in Extract<keyof T, `${number}`>]: 0 extends 1 & T[Key]
+          ? never
+          : T[Key] extends FormDataConvertibleValue
             ? never
-            : T[Key] extends FormDataConvertibleValue
-              ? never
-              : `${Key & string}.${FormDataKeys<T[Key & string] & string>}`
-        }[Extract<keyof T, `${number}`>]
+            : `${Key & string}.${FormDataKeys<T[Key & string] & string>}`
+      }[Extract<keyof T, `${number}`>]
 
 /**
  * Helper type for object form data keys
@@ -207,7 +207,7 @@ export type FormDataValues<T, K extends FormDataKeys<T>> = K extends `${infer P}
 
 export type FormDataError<T> = Partial<Record<FormDataKeys<T>, ErrorValue>>
 
-export type Method = 'get' | 'post' | 'put' | 'patch' | 'delete'
+export type Method = 'get' | 'post' | 'put' | 'patch' | 'delete' | 'query'
 
 export type RequestPayload = Record<string, FormDataConvertible> | FormData
 
@@ -256,6 +256,8 @@ export interface Page<SharedProps extends PageProps = PageProps> {
 
   /** @internal */
   rememberedState: Record<string, unknown>
+  /** @internal */
+  queryMethodData?: Record<string, FormDataConvertible>
   /** @internal */
   optimisticUpdatedAt?: Record<string, number>
 }
@@ -386,9 +388,10 @@ export type GlobalEventsMap<T extends RequestPayload = RequestPayload> = {
     result: void
   }
   navigate: {
-    parameters: [Page<SharedPageProps>, { cached?: boolean; visitId?: string }?]
+    parameters: [Page<SharedPageProps>, { type: 'initial' | 'visit' | 'history'; cached?: boolean; visitId?: string }]
     details: {
       page: Page<SharedPageProps>
+      type: 'initial' | 'visit' | 'history'
       cached?: boolean
       visitId?: string
     }
@@ -499,7 +502,7 @@ export type GlobalEventCallback<TEventName extends GlobalEventNames<T>, T extend
   ...params: GlobalEventParameters<TEventName, T>
 ) => GlobalEventResult<TEventName, T>
 
-export type InternalEvent = 'missingHistoryItem' | 'loadDeferredProps' | 'historyQuotaExceeded'
+export type InternalEvent = 'missingHistoryItem' | 'loadDeferredProps' | 'historyQuotaExceeded' | 'leavePage'
 
 export type VisitCallbacks<T extends RequestPayload = RequestPayload> = {
   onCancelToken: CancelTokenCallback
@@ -525,7 +528,11 @@ export type ReloadOptions<T extends RequestPayload = RequestPayload> = Omit<
   'preserveScroll' | 'preserveState'
 >
 
+export type PollBackgroundOption = 'throttle' | 'pause' | 'continue'
+
 export type PollOptions = {
+  background?: PollBackgroundOption
+  /** @deprecated Use `background: 'continue'` instead. */
   keepAlive?: boolean
   autoStart?: boolean
   mode?: 'overlap' | 'cancel' | 'rest'
@@ -573,6 +580,7 @@ export type InternalActiveVisit = ActiveVisit & {
   onPrefetchError?: (error: Error) => void
   deferredProps?: boolean
   poll?: boolean
+  queryMethodReload?: boolean
   cached?: boolean
 }
 
@@ -788,7 +796,7 @@ export type UseFormWithPrecognitionArguments =
 type UseFormInertiaArguments<TForm> =
   | []
   | [data: TForm | (() => TForm)]
-  | [rememberKey: string, data: TForm | (() => TForm)]
+  | [rememberKey: string | null | undefined, data: TForm | (() => TForm)]
 type UseFormPrecognitionArguments<TForm> =
   | [urlMethodPair: UrlMethodPair | (() => UrlMethodPair), data: TForm | (() => TForm)]
   | [method: Method | (() => Method), url: string | (() => string), data: TForm | (() => TForm)]
@@ -923,6 +931,7 @@ export interface UseInfiniteScrollDataManager {
   fetchNext: (reloadOptions?: ReloadOptions) => void
   fetchPrevious: (reloadOptions?: ReloadOptions) => void
   removeEventListener: () => void
+  flush: () => void
 }
 
 export interface UseInfiniteScrollElementManager {

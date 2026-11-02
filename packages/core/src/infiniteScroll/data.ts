@@ -1,6 +1,6 @@
 import { getCurrentContext } from '../routerGraph'
 import { ActiveVisit } from '../types'
-import { Page, PendingVisit, ReloadOptions, ScrollProp, UseInfiniteScrollDataManager } from '../types'
+import { CancelToken, Page, PendingVisit, ReloadOptions, ScrollProp, UseInfiniteScrollDataManager } from '../types'
 
 const MERGE_INTENT_HEADER = 'X-Inertia-Infinite-Scroll-Merge-Intent'
 
@@ -71,6 +71,9 @@ export const useInfiniteScrollData = (options: {
     state.lastLoadedPage = scrollProp.currentPage
     state.requestCount = 0
   }
+
+  let cancelInFlightRequest: VoidFunction | null = null
+  let flushed = false
 
   const getRememberKey = () => `inertia:infinite-scroll-data:${options.getPropName()}`
 
@@ -161,6 +164,10 @@ export const useInfiniteScrollData = (options: {
         [MERGE_INTENT_HEADER]: side === 'previous' ? 'prepend' : 'append',
         ...reloadOptions.headers,
       },
+      onCancelToken: (cancelToken: CancelToken) => {
+        cancelInFlightRequest = cancelToken.cancel
+        reloadOptions.onCancelToken?.(cancelToken)
+      },
       onBefore: (visit: PendingVisit) => {
         side === 'next' ? options.onBeforeNextRequest() : options.onBeforePreviousRequest()
         reloadOptions.onBefore?.(visit)
@@ -170,18 +177,25 @@ export const useInfiniteScrollData = (options: {
         reloadOptions.onBeforeUpdate?.(page)
       },
       onSuccess: (page: Page) => {
+        if (flushed) {
+          return
+        }
+
         syncStateOnSuccess(side)
         reloadOptions.onSuccess?.(page)
       },
       onFinish: (visit: ActiveVisit) => {
         state.loading = false
+        cancelInFlightRequest = null
 
-        const completed = visit.completed
-        const page = completed ? state.lastLoadedPage : null
+        if (!flushed) {
+          const completed = visit.completed
+          const page = completed ? state.lastLoadedPage : null
 
-        side === 'next'
-          ? options.onCompleteNextRequest(page, { page, completed })
-          : options.onCompletePreviousRequest(page, { page, completed })
+          side === 'next'
+            ? options.onCompleteNextRequest(page, { page, completed })
+            : options.onCompletePreviousRequest(page, { page, completed })
+        }
 
         reloadOptions.onFinish?.(visit)
       },
@@ -194,6 +208,14 @@ export const useInfiniteScrollData = (options: {
   const fetchPrevious = (reloadOptions?: ReloadOptions): void => fetchPage('previous', reloadOptions)
   const fetchNext = (reloadOptions?: ReloadOptions): void => fetchPage('next', reloadOptions)
 
+  // The router only cancels this request when a visit leaves the page, so we also cancel it on unmount.
+  // Its callbacks may still run when the response already arrived, and those should not touch the DOM.
+  const flush = () => {
+    flushed = true
+    removeEventListener()
+    cancelInFlightRequest?.()
+  }
+
   return {
     getLastLoadedPage,
     getPageName,
@@ -203,5 +225,6 @@ export const useInfiniteScrollData = (options: {
     fetchNext,
     fetchPrevious,
     removeEventListener,
+    flush,
   }
 }

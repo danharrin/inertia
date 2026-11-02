@@ -72,6 +72,8 @@ export class CurrentPage {
       cached = false,
       initialRender = false,
       visitId,
+      isCancelled = () => false,
+      onCommit = () => {},
     }: {
       replace?: boolean
       preserveScroll?: boolean
@@ -80,11 +82,15 @@ export class CurrentPage {
       cached?: boolean
       initialRender?: boolean
       visitId?: string
+      isCancelled?: () => boolean
+      onCommit?: () => void
     } = {},
   ): Promise<void> {
     if (!this.context.navigation.active) {
       return Promise.resolve()
     }
+
+    const previousPendingDeferredProps = this.pendingDeferredProps
 
     if (Object.keys(page.deferredProps || {}).length) {
       this.pendingDeferredProps = {
@@ -99,19 +105,29 @@ export class CurrentPage {
       }
     }
 
+    const pendingDeferredProps = this.pendingDeferredProps
+
     this.componentId = {}
 
     const componentId = this.componentId
 
     if (page.clearHistory) {
       this.context.history.clear()
+      this.context.prefetchedRequests.removeAll()
     }
 
     return this.resolve(page.component, page).then((component) => {
-      if (componentId !== this.componentId) {
-        // Component has changed since we started resolving this component, bail
+      if (componentId !== this.componentId || isCancelled()) {
+        // A newer page may still load our deferred props, but those of a cancelled visit shouldn't outlive it
+        if (isCancelled() && this.pendingDeferredProps === pendingDeferredProps) {
+          this.pendingDeferredProps = previousPendingDeferredProps
+        }
+
+        // Component has changed or the visit was cancelled since we started resolving this component, bail
         return
       }
+
+      onCommit()
 
       page.rememberedState ??= {}
 
@@ -122,6 +138,9 @@ export class CurrentPage {
 
       // Clear flash data from the page object, we don't want it when navigating back/forward...
       const pageForHistory = { ...page, flash: {} }
+
+      // A new page replaces the one we booted on, so restore() must stop falling back to its state
+      this.context.history.clearInitialState(this.context.history.rememberedState)
 
       return new Promise<void>((resolve) =>
         replace
@@ -209,7 +228,7 @@ export class CurrentPage {
           }
 
           if (!replace) {
-            this.context.events.fireNavigateEvent(page, { cached, visitId })
+            this.context.events.fireNavigateEvent(page, { type: 'visit', cached, visitId })
           }
         })
       })
@@ -224,11 +243,14 @@ export class CurrentPage {
       preserveState?: boolean
     } = {},
   ) {
-    const componentId = this.componentId
-
     if (!this.context.navigation.active) {
       return Promise.resolve()
     }
+
+    // A restored history entry supersedes any page update still resolving its component
+    this.componentId = {}
+
+    const componentId = this.componentId
 
     return this.resolve(page.component, page).then((component) => {
       if (componentId !== this.componentId) {

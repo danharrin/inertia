@@ -131,7 +131,7 @@ export default function useInfiniteScroll(options: UseInfiniteScrollOptions): Us
     elementManager,
     flush: () => {
       removeEventListener()
-      dataManager.removeEventListener()
+      dataManager.flush()
       elementManager.flushAll()
       queryStringManager.cancel()
     },

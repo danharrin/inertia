@@ -51,6 +51,7 @@ export class InitialVisit {
         this.context.page.set(data, { preserveScroll: true, preserveState: true, visitId }).then(() => {
           this.context.scroll.restore(scrollRegions)
           this.context.events.fireNavigateEvent(this.context.page.get(), {
+            type: 'history',
             visitId,
           })
         })
@@ -145,7 +146,7 @@ export class InitialVisit {
   protected fireInitialEvents(visitId: string): void {
     const page = this.context.page.get()
 
-    this.context.events.fireNavigateEvent(page, { visitId })
+    this.context.events.fireNavigateEvent(page, { type: 'initial', visitId })
 
     if (Object.keys(page.flash).length > 0) {
       queueMicrotask(() => {

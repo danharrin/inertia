@@ -39,8 +39,8 @@ export function createEvents(context: RouterContext) {
     return fireEvent('beforeUpdate', { detail: { page } })
   }
 
-  const fireNavigateEvent: GlobalEventTrigger<'navigate'> = (page, { cached = false, visitId } = {}) => {
-    return fireEvent('navigate', { detail: { page, cached, visitId } })
+  const fireNavigateEvent: GlobalEventTrigger<'navigate'> = (page, { type, cached = false, visitId }) => {
+    return fireEvent('navigate', { detail: { page, type, cached, visitId } })
   }
 
   const fireClientVisitEvent: GlobalEventTrigger<'clientVisit'> = (page, { replace, visitId }) => {

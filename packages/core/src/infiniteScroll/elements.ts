@@ -124,6 +124,7 @@ export const useInfiniteScrollElementManager = (options: {
     disableTriggers()
     intersectionObservers.flushAll()
     itemsMutationObserver?.disconnect()
+    rememberElementsDebounced.cancel()
   }
 
   const addedElements = new Set<HTMLElement>()
